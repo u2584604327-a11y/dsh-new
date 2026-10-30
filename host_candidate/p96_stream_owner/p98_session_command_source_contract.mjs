@@ -145,5 +145,25 @@ process.stdout.write('P98_SESSION_COMMAND_SOURCE_FILE_BASENAME='+path.basename(f
 process.stdout.write('P98_SESSION_COMMAND_CLASS_FIELDS='+JSON.stringify([...new Set(classThisFields)].slice(0,80))+'\n');
 process.stdout.write('P98_SESSION_COMMAND_CLASS_SAFE_LITERALS='+JSON.stringify([...new Set(classLiterals)].slice(0,100))+'\n');
 process.stdout.write('P98_SESSION_COMMAND_METHOD_CONTRACTS='+JSON.stringify(contracts)+'\n');
+let agentFound=null, agentFoundPath=null;
+for(const file of filesUnder(root)){
+  const source=fs.readFileSync(file,'utf8');
+  if(!source.includes('ApiSessionAgentController'))continue;
+  const block=findClassBlock(source,'ApiSessionAgentController');
+  if(block){agentFound=block;agentFoundPath=file;break;}
+}
+if(!agentFound)throw new Error('API_SESSION_AGENT_CONTROLLER_CLASS_NOT_FOUND');
+
+const agentMethods=['constructor','createSession','resolveAgent','get','selectionFor','serializeImageAdmission'];
+const agentContracts=agentMethods.map(name=>contract(name,balancedMethod(agentFound,name)));
+const agentLiterals=[...agentFound.matchAll(/["']([^"'\n\r]{1,100})["']/g)]
+  .map(x=>x[1]).filter(safeLiteral);
+const agentFields=[...agentFound.matchAll(/this\??\.([A-Za-z_$][A-Za-z0-9_$]{0,80})/g)]
+  .map(x=>x[1]).filter(safeId);
+
+process.stdout.write('P98_API_SESSION_AGENT_SOURCE_FILE_BASENAME='+path.basename(agentFoundPath)+'\n');
+process.stdout.write('P98_API_SESSION_AGENT_CLASS_FIELDS='+JSON.stringify([...new Set(agentFields)].slice(0,80))+'\n');
+process.stdout.write('P98_API_SESSION_AGENT_CLASS_SAFE_LITERALS='+JSON.stringify([...new Set(agentLiterals)].slice(0,100))+'\n');
+process.stdout.write('P98_API_SESSION_AGENT_METHOD_CONTRACTS='+JSON.stringify(agentContracts)+'\n');
 process.stdout.write('P98_SESSION_COMMAND_SOURCE_CONTRACT=PASS\n');
 process.stdout.write('P98_SESSION_COMMAND_SOURCE_TEXT_EXPORTED=NO\n');
