@@ -163,6 +163,44 @@ try{
    log('SESSION_PROJECTION_SERVICE_TYPE',typeof projectionService);
    log('SESSION_PROJECTION_SERVICE_METHODS',JSON.stringify(methods(projectionService)));
    log('SESSION_PROJECTION_SERVICE_OWN_SHAPE',JSON.stringify(safeOwnShape(projectionService)));
+   const registrations=projectionService?.registrations;
+   const registrationCtor=registrations?.constructor?.name||'MISSING';
+   const registrationIsMap=registrations instanceof Map;
+   const registrationIsSet=registrations instanceof Set;
+   const registrationSize=typeof registrations?.size==='number'
+     ?registrations.size:Object.keys(registrations||{}).length;
+   function safeRegistrationKey(value){
+     if(typeof value==='string' && /^[A-Za-z0-9_.:/-]{1,100}$/.test(value))return value;
+     if(typeof value==='symbol' && /^[A-Za-z0-9_.:/-]{1,100}$/.test(value.description||''))return 'symbol:'+value.description;
+     return typeof value;
+   }
+   let registrationKeys=[];
+   let registrationDefinitions=[];
+   if(registrationIsMap){
+     registrationKeys=[...registrations.keys()].slice(0,40).map(safeRegistrationKey);
+     registrationDefinitions=[...registrations.entries()].slice(0,20).map(([key,def])=>({
+       key:safeRegistrationKey(key),
+       type:Array.isArray(def)?'array':typeof def,
+       ownKeys:def&&typeof def==='object'
+         ?Object.keys(def).filter(k=>/^[A-Za-z_$][A-Za-z0-9_$]{0,64}$/.test(k)).slice(0,24):[]
+     }));
+   }else if(registrations&&typeof registrations==='object'){
+     registrationKeys=Object.keys(registrations)
+       .filter(k=>/^[A-Za-z0-9_.:/-]{1,100}$/.test(k)).slice(0,40);
+     registrationDefinitions=registrationKeys.slice(0,20).map(key=>{
+       const def=registrations[key];
+       return {key,type:Array.isArray(def)?'array':typeof def,
+         ownKeys:def&&typeof def==='object'
+          ?Object.keys(def).filter(k=>/^[A-Za-z_$][A-Za-z0-9_$]{0,64}$/.test(k)).slice(0,24):[]};
+     });
+   }
+   log('SESSION_PROJECTION_REGISTRATIONS_CONSTRUCTOR',registrationCtor);
+   log('SESSION_PROJECTION_REGISTRATIONS_IS_MAP',registrationIsMap);
+   log('SESSION_PROJECTION_REGISTRATIONS_IS_SET',registrationIsSet);
+   log('SESSION_PROJECTION_REGISTRATIONS_SIZE',registrationSize);
+   log('SESSION_PROJECTION_REGISTRATION_KEYS',JSON.stringify(registrationKeys));
+   log('SESSION_PROJECTION_REGISTRATION_DEFINITIONS',JSON.stringify(registrationDefinitions));
+   log('INBOX_PROJECTIONS_SAME_SERVICE',handle.inbox?.projections===projectionService);
    for(const name of methods(projectionService).map(x=>x.name).slice(0,20)){
      const contract=safeMethodContract(projectionService,name);
      if(contract)log('SESSION_PROJECTION_'+name.toUpperCase()+'_CONTRACT',JSON.stringify(contract));
