@@ -1,0 +1,129 @@
+name: DSH P17/P18 authenticated capability broker and revocation
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'host_candidate/p17_capability/**'
+      - '.github/workflows/p17-capability-ledger.yml'
+  pull_request:
+    paths:
+      - 'host_candidate/p17_capability/**'
+      - '.github/workflows/p17-capability-ledger.yml'
+  workflow_dispatch:
+concurrency:
+  group: dsh-p17-broker-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  default-deny-capability-unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Source-only no-Android unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/p17-test
+          javac --release 8 -d out/p17-test \
+            host_candidate/p17_capability/src/com/dsh/p17/P17CapabilityGate.java \
+            host_candidate/p17_capability/test/com/dsh/p17/P17GateTest.java \
+            host_candidate/p17_capability/test/com/dsh/p17/P18ConcurrentGrantTest.java
+          java -cp out/p17-test com.dsh.p17.P17GateTest
+          java -cp out/p17-test com.dsh.p17.P18ConcurrentGrantTest
+          echo 'P17_JAVA_ONE_SHOT_CAPABILITY_GATE=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P18_JVM_CONCURRENT_ONE_SHOT=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P17_RAW_FILE_OR_GENERIC_NETWORK_CAPABILITY=DENIED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P17_REAL_BINDER_UID_GATE=NOT_YET_CONNECTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P17_FULL_DSH_VM_ISOLATION=NOT_YET' >> "$GITHUB_STEP_SUMMARY"
+      - name: Source audit no arbitrary sinks in capability ledger
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -E 'java.net.|HttpURLConnection|Runtime.getRuntime|ProcessBuilder|FileInputStream' \
+            host_candidate/p17_capability/src/com/dsh/p17/P17CapabilityGate.java
+
+  real-android-binder-uid-broker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Android 35 tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager"; then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 2>/dev/null | head -n1 || true)"
+          fi
+          test -n "$manager"
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+          echo "SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+      - name: Build unprivileged isolated worker and trusted broker standalone
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/classes out/dex
+          javac --release 8 -cp "$SDK_ROOT/platforms/android-35/android.jar" \
+            -d out/classes \
+            host_candidate/p17_capability/src/com/dsh/p17/P17CapabilityGate.java \
+            host_candidate/p17_capability/android/com/dsh/p17/probe/IsolatedCountWorker.java \
+            host_candidate/p17_capability/android/com/dsh/p17/probe/P17BrokerProbeActivity.java
+          jar cf out/p17.jar -C out/classes .
+          "$SDK_ROOT/build-tools/35.0.0/d8" --min-api 34 \
+            --lib "$SDK_ROOT/platforms/android-35/android.jar" \
+            --output out/dex out/p17.jar
+          "$SDK_ROOT/build-tools/35.0.0/aapt" package -f \
+            -M host_candidate/p17_capability/android/AndroidManifest.xml \
+            -I "$SDK_ROOT/platforms/android-35/android.jar" \
+            -F out/p17-unsigned.apk
+          (cd out/dex && zip -q -j ../p17-unsigned.apk classes.dex)
+          "$SDK_ROOT/build-tools/35.0.0/zipalign" -f 4 \
+            out/p17-unsigned.apk out/p17-aligned.apk
+          LAB_PASS="$(openssl rand -hex 16)"
+          keytool -genkeypair -alias disposable -keyalg RSA -keysize 3072 -validity 1 \
+            -storetype PKCS12 -dname 'CN=P17 THROWAWAY TEST ONLY' \
+            -keystore out/p17-ci.p12 -storepass "$LAB_PASS" -keypass "$LAB_PASS" \
+            -noprompt >/dev/null 2>&1
+          "$SDK_ROOT/build-tools/35.0.0/apksigner" sign --ks out/p17-ci.p12 \
+            --ks-key-alias disposable --ks-pass "pass:$LAB_PASS" \
+            --key-pass "pass:$LAB_PASS" \
+            --out out/p17-disposable.apk out/p17-aligned.apk
+          "$SDK_ROOT/build-tools/35.0.0/apksigner" verify out/p17-disposable.apk
+          ! grep -qi 'uses-permission' host_candidate/p17_capability/android/AndroidManifest.xml
+          echo 'P17_STANDALONE_BROKER_BUILD=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Prepare hardware accelerated emulator
+        shell: bash
+        run: |
+          if test -c /dev/kvm; then sudo chmod 666 /dev/kvm; fi
+      - name: Test authenticated Messenger UID + explicit UI grant and replay denial
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: bash host_candidate/p17_capability/android/run_broker_probe.sh
+      - name: Destroy test key APK and IPC logs
+        if: always()
+        shell: bash
+        run: |
+          rm -f out/p17-ci.p12 out/p17-disposable.apk out/p17-unsigned.apk \
+            out/p17-aligned.apk out/p17-private-log.txt
+          echo 'P17_DSH_PRODUCTION_NODE_MIGRATION=NOT_DONE' >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,63 @@
+name: DSH P62 original generated bridge forwarding callee
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p62_forward_target/**'
+      - 'host_candidate/P62_GENERATED_WRAPPER_TO_CALLEE.md'
+      - '.github/workflows/p62-original-forward-callee.yml'
+permissions:
+  contents: read
+jobs:
+  original-signed-v138-readonly:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p62-follow-original-generated-command-constructor-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p61-resolve-dex-generated-list-bridge-and-release-gates-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Synthetic wrapper semantics fail-closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          python host_candidate/p62_forward_target/test_p62_forward_target.py > .p62_test.log
+          grep -Eq '^P62_SYNTHETIC_FORWARD_TARGET=PASS assertions=[0-9]+$' .p62_test.log
+          grep -Fxq 'P62_SYNTHETIC_ORIGINAL_APK_USED=NO' .p62_test.log
+          echo 'P62_SYNTHETIC_FORWARD_REGISTER_GUARD=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Exact original signed v138 and forwarded List callee
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p62_private
+          gh release download dsh-baseline-v135dsh-baseline-v135 \
+            --repo "$GH_REPO" --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --dir .p62_private
+          original=.p62_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+          printf '%s  %s\n' \
+            3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            "$original" | sha256sum -c - >/dev/null
+          python host_candidate/p62_forward_target/p62_forward_target.py "$original" > .p62_private/categorical.log
+          grep -Fxq 'P62_EXACT_PINNED_SIGNED_V138_AND_P61_CHAIN=PASS' .p62_private/categorical.log
+          grep -Fxq 'P62_ORIGINAL_SYMBOLS_PATHS_ARGV_AND_VALUES_EMITTED=NO' .p62_private/categorical.log
+          grep -Fxq 'P62_FORMAL_SIGNED_V139=BLOCKED' .p62_private/categorical.log
+          grep '^P62_CATEGORICAL_CALLEE_STRUCTURE=' .p62_private/categorical.log | tee -a "$GITHUB_STEP_SUMMARY"
+          echo 'P62_REAL_LIFECYCLE_AND_FORMAL_SIGNED_APK=BLOCKED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Clean original and logs
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p62_private .p62_test.log
+          echo 'P62_SIGNING_SECRETS_NEVER_ACCESSED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P62_PRODUCTION_OR_OWNER_DEVICE_UNCHANGED=YES' >> "$GITHUB_STEP_SUMMARY"

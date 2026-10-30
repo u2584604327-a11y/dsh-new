@@ -1,0 +1,61 @@
+name: DSH P14 LAN API token usage source-gated regression
+on:
+  push:
+    branches: [main, 'dsh/p96-original-engine-stream-owner-narrow-20261030']
+    paths:
+      - 'host_candidate/patch_token_usage_p14.py'
+      - 'host_candidate/test_token_p14.mjs'
+      - '.github/workflows/p14-token-usage.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify-token-source-and-archive-scope:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: SHA pin P6 asset package from private release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input out
+          gh release download dsh-source-v139-p6 --repo "$GH_REPO" \
+            --pattern DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip --dir input
+          printf '%s  %s\n' 3af586c2c83d1aea67d119357672559eb09371c77ef4e06900bb697c06d11fd5 \
+            input/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip | sha256sum -c -
+          python3 - <<'PY'
+          import io,pathlib,zipfile,hashlib
+          with zipfile.ZipFile('input/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip') as outer:
+            with zipfile.ZipFile(io.BytesIO(outer.read('output/DSH_V139_P6_ASSET_OVERLAY_NOT_APK.zip'))) as overlay:
+              data=overlay.read('assets/browser-tool.zip')
+          assert hashlib.sha256(data).hexdigest()=='aedb0a6582619c319ff85d13d6ad6f1a060c12d896fbbf1068575356190e7f37'
+          pathlib.Path('out/browser-tool-p6.zip').write_bytes(data)
+          PY
+      - name: Source-only real browser plugin patch and exact resource comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 host_candidate/patch_token_usage_p14.py out/browser-tool-p6.zip \
+            --output out/browser-tool-p14.zip --js-output out/mobile-ui-p14-client.js
+          node --check out/mobile-ui-p14-client.js
+          node host_candidate/test_token_p14.mjs out/mobile-ui-p14-client.js
+          echo 'P14_TOKEN_SOURCE_3_STATE=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P14_OFFICIAL_PROVIDER_USAGE_PRESERVED=PASS_UNIT' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P14_BROWSER_RESOURCE_DIFF=ONE_NESTED_JS_ONLY' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P14_MIXED_PROVIDER_ESTIMATE_PROVENANCE=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P14_REAL_LAN_PROVIDER_USAGE=NOT_VERIFIED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P14_ANDROID_UI_RUNTIME=NOT_VERIFIED' >> "$GITHUB_STEP_SUMMARY"
+      - name: No APK/key/diagnostic archive distribution
+        if: always()
+        shell: bash
+        run: |
+          echo 'No binary artifacts uploaded or released; no user tokens/logs read.' >> "$GITHUB_STEP_SUMMARY"

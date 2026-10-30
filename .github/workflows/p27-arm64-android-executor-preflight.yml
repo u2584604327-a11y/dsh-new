@@ -1,0 +1,59 @@
+name: DSH P27 genuine ARM64 Linux runner vs actual Android ARM64 guest preflight
+on:
+  pull_request:
+    paths:
+      - 'host_candidate/p27_arm_android_executor_preflight.py'
+      - 'host_candidate/P27_ARM64_ANDROID_EXECUTOR_GATE.md'
+      - '.github/workflows/p27-arm64-android-executor-preflight.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: dsh-p27-arm64-host-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  identify-actual-arm64-runner-and-android-executor:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run bounded read-only native ARM64 and Android guest preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile host_candidate/p27_arm_android_executor_preflight.py
+          python3 host_candidate/p27_arm_android_executor_preflight.py \
+            --report out/p27_arm64_capability.json
+          python3 - <<'PY'
+          import json,pathlib
+          x=json.loads(pathlib.Path("out/p27_arm64_capability.json").read_text())
+          assert x["runner_native_arm64"] is True, "Not real ARM64 host"
+          assert x["android_arm64_guest_adb_connected"]=="NOT_CHECKED_NO_GUEST_BOOT"
+          assert x["android_arm64_guest_sdk_35"]=="NOT_TESTED"
+          assert x["original_arm64_node_executed_in_android_isolated_uid"]=="NOT_TESTED"
+          assert x["dsh_v139_apk_ready"] is False
+          assert x["release"]=="BLOCKED"
+          print("P27_NATIVE_ARM64_RUNNER_PROVEN_BY_KERNEL=PASS")
+          print("P27_ARM64_ANDROID_GUEST_NOT_CONFLATED_WITH_LINUX=PASS")
+          PY
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          x=json.load(open("out/p27_arm64_capability.json"))
+          print("## P27 executor discovery — source-only gate")
+          print("- Linux host ARM64: **PASS**")
+          print("- KVM for guest: **"+("USABLE" if x["arm64_linux_kvm"]["usable"] else "UNAVAILABLE")+"**")
+          print("- Installed native ARM64 Android emulator: **"+("OBSERVED_UNTESTED" if x["official_google_linux_arm64_emulator_binary_observed"] else "NOT_PRESENT")+"**")
+          print("- Actual Android ARM64 guest: **NOT BOOTED / NOT TESTED**")
+          print("- Real original v138 Node inside Android isolated UID: **NOT TESTED**")
+          print("- No signing, phone install, private APK, production modification or emulator downloads")
+          print("- v139 release: **BLOCKED**")
+          PY
+      - name: Delete machine metadata report
+        if: always()
+        shell: bash
+        run: |
+          rm -rf out
+          echo 'P27_REAL_NODE_ARM64_ANDROID_EXECUTION=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P27_DEVICE_AND_PRODUCTION=UNCHANGED' >> "$GITHUB_STEP_SUMMARY"

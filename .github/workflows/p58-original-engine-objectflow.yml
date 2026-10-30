@@ -1,0 +1,71 @@
+name: DSH P58 exact v138 builder/list command object flow audit
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p58_objectflow/**'
+      - 'host_candidate/P58_EXACT_OBJECTFLOW_GATE.md'
+      - '.github/workflows/p58-original-engine-objectflow.yml'
+permissions:
+  contents: read
+concurrency:
+  group: p58-original-objectflow-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  p58-synthetic-and-original-static:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p58-engine-builder-command-ready-objectflow-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p57-engine-literal-register-ready-trace-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Private scope and synthetic object-flow positive/negative guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          python -m py_compile host_candidate/p58_objectflow/*.py
+          python host_candidate/p58_objectflow/test_p58_objectflow.py > .p58_synthetic.log
+          grep -Eq '^P58_OBJECT_PROVENANCE_SYNTHETIC_TESTS=PASS assertions=[0-9]+$' .p58_synthetic.log
+          grep -Fxq 'P58_SYNTHETIC_ONLY_ORIGINAL_BINARY_NEVER_USED=YES' .p58_synthetic.log
+          echo 'P58_OBJECT_POSITIVE_AND_ALIAS_KILL_NEGATIVES=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Exact original SHA, full tree, P57 and object provenance scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p58_private
+          gh release download dsh-baseline-v135dsh-baseline-v135 \
+            --repo "$GH_REPO" --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --dir .p58_private
+          original=.p58_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+          printf '%s  %s\n' \
+            3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            "$original" | sha256sum -c - >/dev/null
+          python host_candidate/p58_objectflow/p58_objectflow.py "$original" > .p58_private/aggregate_only.log
+          grep -Fxq 'P58_PINNED_P57_P56_P54_V138_CHAIN=PASS' .p58_private/aggregate_only.log
+          grep -Fxq 'P58_ORIGINAL_ENGINE_PROCESS_SPAWN_ANCHOR=PASS' .p58_private/aggregate_only.log
+          grep -Fxq 'P58_ORIGINAL_ARGV_VALUES_AND_JS_PATHS_EMITTED=NO' .p58_private/aggregate_only.log
+          grep -Fxq 'P58_ORIGINAL_SCRIPT_ENTRY_PROVEN=NO' .p58_private/aggregate_only.log
+          grep -Fxq 'P58_READY_SIGNAL_CONDITION_PROVEN=NO' .p58_private/aggregate_only.log
+          grep -Fxq 'P58_SIGNED_V139_APK=BLOCKED' .p58_private/aggregate_only.log
+          grep '^P58_LOCAL_OBJECT_FLOW_COUNTS=' .p58_private/aggregate_only.log | tee -a "$GITHUB_STEP_SUMMARY"
+          echo 'P58_P53_ORIGINAL_ENGINE_READY=NOT_PROVEN' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P58_V139_SIGNING_RELEASE=BLOCKED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always destroy exact original APK and transient reports
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p58_private .p58_synthetic.log
+          echo 'P58_ORIGINAL_BINARY_OR_SCRIPT_UPLOADED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P58_DEVICE_AND_PRODUCTION_UNCHANGED=YES' >> "$GITHUB_STEP_SUMMARY"

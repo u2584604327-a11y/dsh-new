@@ -1,0 +1,125 @@
+name: P76 real original engine.bin read-only isolated Binder FD transfer
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p76_original_engine_fd/**'
+      - 'host_candidate/p43_original_service/android/com/dsh/android/p43/P43ProbeActivity.java'
+      - 'host_candidate/p43_original_service/android/com/dsh/android/p43/P43IsolatedWorker.java'
+      - 'host_candidate/p43_original_service/build_embedded_emulator_apk.sh'
+      - 'host_candidate/P76_ORIGINAL_ENGINE_ARCHIVE_REAL_FD_GATE.md'
+      - '.github/workflows/p76-real-original-engine-fd.yml'
+permissions:
+  contents: read
+jobs:
+  signed-v138-original-engine-archive-isolated-fd:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p76-real-original-engine-archive-isolated-fd-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p75-cross-thread-engine-start-rendezvous-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      P47_NO_HOST_FALLBACK: '1'
+      P49_NODE_STAGE: '0'
+      P51_SIDE_BY_SIDE: '1'
+      P51_X86_SIMULATOR_ONLY: '1'
+      P72_ACCESSOR_FIXTURE_ONLY: '1'
+      P74_FIXTURE_ENGINE_BRIDGE: '1'
+      P75_RENDEZVOUS_FIXTURE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Private source, original engine digest, and P75 regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          test "$P47_NO_HOST_FALLBACK" = 1
+          test "$P51_SIDE_BY_SIDE" = 1
+          bash -n host_candidate/p76_original_engine_fd/run_emulator_archive.sh
+          bash -n host_candidate/p43_original_service/build_embedded_emulator_apk.sh
+          grep -Fq 'MODE_READ_ONLY' host_candidate/p76_original_engine_fd/android/com/dsh/android/p76/P76EngineArchiveFdProbe.java
+          grep -Fq 'P76_FAILED_TO_UNLINK_HOST_PATH' host_candidate/p76_original_engine_fd/android/com/dsh/android/p76/P76EngineArchiveFdProbe.java
+          mkdir -p .p76_jvm .p76_source
+          javac --release 8 -d .p76_jvm \
+            host_candidate/p37_remote_process/src/com/dsh/p37/P37RemoteProcess.java \
+            host_candidate/p75_engine_rendezvous/src/com/dsh/android/p75/P75EngineStartRendezvous.java \
+            host_candidate/p75_engine_rendezvous/test/com/dsh/android/p75/P75EngineStartRendezvousTest.java
+          java -cp .p76_jvm com.dsh.android.p75.P75EngineStartRendezvousTest > .p76_jvm.log
+          grep -Eq '^P75_CROSS_THREAD_ENGINE_BINDER_RENDEZVOUS_JVM=PASS assertions=[0-9]+$' .p76_jvm.log
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          sudo apt-get -qq update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -qq install -y apktool
+          SDK="$ANDROID_HOME"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager";then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 | head -n1 || true)"
+          fi
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+          echo 'P76_PRECHECK_AND_P75_JVM=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Exact signed-original source SHA and engine GZIP digest class
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk --dir .p76_source
+          original=.p76_source/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+          printf '%s  %s\n' 3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 "$original" | sha256sum -c - >/dev/null
+          python - "$original" <<'PY'
+          import hashlib,sys,zipfile
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              n=z.namelist().count("assets/engine.bin")
+              assert n==1, "P76_ARCHIVE_DUPLICATE"
+              info=z.getinfo("assets/engine.bin")
+              assert 1024<info.file_size<=128*1024*1024,"P76_ARCHIVE_SIZE_LIMIT"
+              digest=hashlib.sha256()
+              with z.open(info) as inp:
+                  prefix=inp.read(2)
+                  assert prefix==b"\x1f\x8b","P76_ARCHIVE_NOT_GZIP"
+                  digest.update(prefix)
+                  for block in iter(lambda:inp.read(1<<20),b""):
+                      digest.update(block)
+              assert len(digest.hexdigest())==64
+          print("P76_REAL_SOURCE_GZIP_SHA256_VERIFIED_IN_MEMORY=PASS")
+          PY
+          echo 'P76_SHA_PINNED_ORIGINAL_ARCHIVE=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Build original derived independent package with P76 isolated FD
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash host_candidate/p43_original_service/build_embedded_emulator_apk.sh > .p76_build.log 2>&1 || {
+            grep -E 'P76_|P75_|P47_|P51_|error:|Traceback' .p76_build.log | tail -n 50 || true
+            exit 1
+          }
+          grep -Fxq 'P47_REBUILT_ORIGINAL_PRIMARY_ENGINE_BRIDGE_NO_HOST_START=PASS' .p76_build.log
+          grep -Fxq 'P51_SIGNED_APK_SEPARATE_PACKAGE_NO_PERMISSIONS=PASS' .p76_build.log
+          test -s .p43tmp/P43-ORIGINAL-DSH-EPHEMERAL-EMULATOR-ONLY.apk
+          echo 'P76_ORIGINAL_ENGINE_ASSET_IDENTICAL_IN_SIDECAR=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Enable KVM if available
+        run: if test -c /dev/kvm;then sudo chmod 666 /dev/kvm;fi
+      - name: Android35 original archive read-only FD isolated worker sha256
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: bash host_candidate/p76_original_engine_fd/run_emulator_archive.sh
+      - name: Always destroy original private APK, derived package and test signing key
+        if: always()
+        run: |
+          rm -rf .p76_source .p43tmp .p76_build.log .p76_jvm .p76_jvm.log
+          echo 'P76_REAL_SCRIPT_MODULE_BROKER=NOT_IMPLEMENTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P76_PRODUCTION_ENGINEMANAGER_READY=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P76_OWNER_DSH_AND_USER_LOGIN_DATA_UNCHANGED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P76_FIXED_SIGNED_V139=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,69 @@
+name: P95 minimal stream-to-message boundary regression
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p95_stream_to_message/**'
+      - 'host_candidate/p93_chat_patch/src/com/dsh/android/p93/P93TurnMessageState.java'
+      - '.github/workflows/p95-stream-to-message.yml'
+permissions:
+  contents: read
+jobs:
+  focused-existing-component-regression:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p95-stream-to-message-tool-boundary-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p94-one-shot-tool-result-model-continuation-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - name: Verify private source and run existing SSE components only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = 'u2584604327-a11y/dshe'
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          mkdir -p .p95tmp/classes
+          curl -fsSL --retry 2 --connect-timeout 10 --max-time 30 \
+            https://repo.maven.apache.org/maven2/org/json/json/20240303/json-20240303.jar \
+            -o .p95tmp/json.jar
+          test "$(wc -c < .p95tmp/json.jar)" -gt 60000
+          javac --release 8 -cp .p95tmp/json.jar -d .p95tmp/classes \
+            host_candidate/p87_omnigate_sse/src/com/dsh/android/p87/P87SseDecoder.java \
+            host_candidate/p87_omnigate_sse/android/com/dsh/android/p87/P87OpenAiDelta.java \
+            host_candidate/p89_existing_stream/src/com/dsh/android/p89/P89ExistingStreamPump.java \
+            host_candidate/p89_existing_stream/android/com/dsh/android/p89/P89ToolCallAssembler.java \
+            host_candidate/p93_chat_patch/src/com/dsh/android/p93/P93TurnMessageState.java \
+            host_candidate/p95_stream_to_message/P95StreamToMessage.java \
+            host_candidate/p95_stream_to_message/P95StreamToMessageTest.java
+          java -cp .p95tmp/classes:.p95tmp/json.jar com.dsh.android.p95.P95StreamToMessageTest | tee .p95tmp/test.log
+          for proof in \
+            P95_EXISTING_SSE_TO_MESSAGE_INCREMENTAL=PASS \
+            P95_TOOL_STREAM_DONE_AWAITS_ORIGINAL_BROKER=PASS \
+            P95_EOF_PRESERVES_PARTIAL_AND_FAILS_CLOSED=PASS \
+            P95_TOOL_CALLBACK_FAILURE_NOT_AWAITING=PASS \
+            P95_EMPTY_STOP_AND_LENGTH_DO_NOT_COMPLETE=PASS \
+            P95_MALFORMED_TOOL_OR_FILTER_FINISH_FAIL_CLOSED=PASS; do
+            grep -Fxq "$proof" .p95tmp/test.log
+          done
+          echo 'P95_EXISTING_SSE_DECODER_TO_MESSAGE_STATE=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Hard original feature freeze
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p95tmp
+          {
+            echo 'P95_ORIGINAL_DSH_MAINACTIVITY_AND_NODE_ENGINE=UNCHANGED'
+            echo 'P95_ORIGINAL_OMNIGATE_NATIVE_API=UNCHANGED'
+            echo 'P95_EXISTING_DSH_NETWORK_RESPONSE_CALLBACK=NOT_WIRED'
+            echo 'P95_MODEL_TOOL_EXECUTOR=NOT_WIRED'
+            echo 'P95_REAL_PHONE=NOT_VERIFIED'
+            echo 'P95_NO_REBUILD_NO_SIGNER_NO_DEPLOY=YES'
+          } >> "$GITHUB_STEP_SUMMARY"

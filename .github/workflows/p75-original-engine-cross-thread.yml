@@ -1,0 +1,103 @@
+name: P75 original Engine startup cross-thread Binder P37 rendezvous
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p75_engine_rendezvous/**'
+      - 'host_candidate/p43_original_service/build_embedded_emulator_apk.sh'
+      - 'host_candidate/p43_original_service/android/com/dsh/android/p43/P43ProbeActivity.java'
+      - 'host_candidate/P75_CROSS_THREAD_ENGINE_BINDER_GATE.md'
+      - '.github/workflows/p75-original-engine-cross-thread.yml'
+permissions:
+  contents: read
+jobs:
+  private-original-main-dex-android35:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p75-cross-thread-engine-start-rendezvous-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p74-exact-engine-bridge-isolated-process-lease-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      P47_NO_HOST_FALLBACK: '1'
+      P49_NODE_STAGE: '0'
+      P51_SIDE_BY_SIDE: '1'
+      P51_X86_SIMULATOR_ONLY: '1'
+      P72_ACCESSOR_FIXTURE_ONLY: '1'
+      P74_FIXTURE_ENGINE_BRIDGE: '1'
+      P75_RENDEZVOUS_FIXTURE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Exact source scope and full JVM cross-thread negative cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          test "$P47_NO_HOST_FALLBACK" = 1
+          test "$P51_SIDE_BY_SIDE" = 1
+          test "$P74_FIXTURE_ENGINE_BRIDGE" = 1
+          test "$P75_RENDEZVOUS_FIXTURE" = 1
+          bash -n host_candidate/p43_original_service/build_embedded_emulator_apk.sh
+          bash -n host_candidate/p75_engine_rendezvous/run_emulator_cross_thread.sh
+          mkdir -p .p75_jvm
+          javac --release 8 -d .p75_jvm \
+            host_candidate/p37_remote_process/src/com/dsh/p37/P37RemoteProcess.java \
+            host_candidate/p75_engine_rendezvous/src/com/dsh/android/p75/P75EngineStartRendezvous.java \
+            host_candidate/p75_engine_rendezvous/test/com/dsh/android/p75/P75EngineStartRendezvousTest.java
+          java -cp .p75_jvm com.dsh.android.p75.P75EngineStartRendezvousTest > .p75_jvm.log
+          grep -Eq '^P75_CROSS_THREAD_ENGINE_BINDER_RENDEZVOUS_JVM=PASS assertions=[0-9]+$' .p75_jvm.log
+          grep -Fxq 'P75_UNAUTHORIZED_ARGV_AND_NO_HOST_FALLBACK=PASS' .p75_jvm.log
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          sudo apt-get -qq update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -qq install -y apktool
+          SDK="$ANDROID_HOME"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager";then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 | head -n1 || true)"
+          fi
+          test -n "$manager"
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+          echo 'P75_CROSS_THREAD_NEGATIVE_AND_CANCEL_JVM=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: SHA-pinned original DSH side-by-side derived APK and startup gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash host_candidate/p43_original_service/build_embedded_emulator_apk.sh > .p75_build.log 2>&1 || {
+            grep -E 'P75_|P74_|P47_|P51_|P72_|error:|Traceback' .p75_build.log | tail -n 50 || true
+            exit 1
+          }
+          grep -Fxq 'P75_ONLY_TEST_P47_GATE_DELEGATES_TO_CROSS_THREAD_RENDEZVOUS=PASS' .p75_build.log
+          grep -Fxq 'P47_REBUILT_ORIGINAL_PRIMARY_ENGINE_BRIDGE_NO_HOST_START=PASS' .p75_build.log
+          grep -Fxq 'P51_SIGNED_APK_SEPARATE_PACKAGE_NO_PERMISSIONS=PASS' .p75_build.log
+          test -s .p43tmp/P43-ORIGINAL-DSH-EPHEMERAL-EMULATOR-ONLY.apk
+          echo 'P75_PRIVATE_EXACT_ORIGINAL_STARTUP_BUILD=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Enable KVM when present
+        run: if test -c /dev/kvm;then sudo chmod 666 /dev/kvm;fi
+      - name: Real Android35 original DEX launch thread awaits authenticated Binder child
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: bash host_candidate/p75_engine_rendezvous/run_emulator_cross_thread.sh
+      - name: Always remove source APK, synthetic original-derived APK and ephemeral signer
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p43tmp .p75_build.log .p75_jvm .p75_jvm.log
+          echo 'P75_ACTUAL_ORIGINAL_ENGINE_MANAGER_COROUTINE=NOT_WIRED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P75_REAL_PRODUCTION_NODE_AND_READY_EXIT_CANCEL=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P75_FIXED_SIGNING_KEY_NEVER_USED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P75_ORIGINAL_INSTALLED_DSH_UNCHANGED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P75_FORMAL_V139=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

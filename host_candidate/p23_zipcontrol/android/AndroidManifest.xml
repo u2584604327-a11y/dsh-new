@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.dsh.p23.zipcontrol">
+  <uses-sdk android:minSdkVersion="34" android:targetSdkVersion="35"/>
+  <application android:label="P23 installed APK ZIP runtime control (disposable)"
+      android:extractNativeLibs="true" android:usesCleartextTraffic="false">
+    <activity android:name=".P23ControlActivity" android:exported="true">
+      <intent-filter><action android:name="android.intent.action.MAIN"/>
+        <category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+    </activity>
+    <service android:name=".P23ControlWorker" android:process=":isolated"
+      android:isolatedProcess="true" android:exported="false"/>
+  </application>
+</manifest>

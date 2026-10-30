@@ -1,0 +1,91 @@
+name: DSH P15 real Android isolated UID and private file denial proof
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'host_candidate/p15_isolated_probe/**'
+      - '.github/workflows/p15-isolated-uid-probe.yml'
+  workflow_dispatch:
+concurrency:
+  group: p15-disposable-isolated-uid-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  disposable-isolated-android-uid:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install platform and Android build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager"; then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 2>/dev/null | head -n1 || true)"
+          fi
+          test -n "$manager"
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+          test -x "$SDK/build-tools/35.0.0/aapt"
+          test -x "$SDK/build-tools/35.0.0/d8"
+          echo "SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+      - name: Build isolated standalone probe (never fused with DSH v139)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/classes out/dex
+          javac --release 8 -cp "$SDK_ROOT/platforms/android-35/android.jar" \
+            -d out/classes \
+            host_candidate/p15_isolated_probe/src/com/dsh/p15probe/P15IsolatedService.java \
+            host_candidate/p15_isolated_probe/src/com/dsh/p15probe/P15ProbeActivity.java
+          jar cf out/p15.jar -C out/classes .
+          "$SDK_ROOT/build-tools/35.0.0/d8" --min-api 28 \
+            --lib "$SDK_ROOT/platforms/android-35/android.jar" --output out/dex out/p15.jar
+          "$SDK_ROOT/build-tools/35.0.0/aapt" package -f \
+            -M host_candidate/p15_isolated_probe/AndroidManifest.xml \
+            -I "$SDK_ROOT/platforms/android-35/android.jar" -F out/p15-unsigned.apk
+          (cd out/dex && zip -q -j ../p15-unsigned.apk classes.dex)
+          "$SDK_ROOT/build-tools/35.0.0/zipalign" -f 4 out/p15-unsigned.apk out/p15-aligned.apk
+          LAB_PASS="$(openssl rand -hex 16)"
+          keytool -genkeypair -alias disposable -keyalg RSA -keysize 3072 -validity 1 \
+            -storetype PKCS12 -dname 'CN=P15 DISPOSABLE ISOLATION TEST ONLY' \
+            -keystore out/p15-ci.p12 -storepass "$LAB_PASS" -keypass "$LAB_PASS" -noprompt >/dev/null 2>&1
+          "$SDK_ROOT/build-tools/35.0.0/apksigner" sign --ks out/p15-ci.p12 \
+            --ks-key-alias disposable --ks-pass "pass:$LAB_PASS" --key-pass "pass:$LAB_PASS" \
+            --out out/p15-disposable.apk out/p15-aligned.apk
+          "$SDK_ROOT/build-tools/35.0.0/apksigner" verify out/p15-disposable.apk
+          if grep -Eiq 'uses-permission|android.permission.INTERNET' \
+            host_candidate/p15_isolated_probe/AndroidManifest.xml; then
+            echo "::error::P15 probe must request no Android permissions"; exit 1
+          fi
+          echo 'P15_STANDALONE_ISOLATED_TEST_APP_BUILD=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Disposable emulator preparation
+        shell: bash
+        run: |
+          if test -c /dev/kvm; then sudo chmod 666 /dev/kvm; fi
+      - name: Prove different UID and private host canary denial on Android 35
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: bash host_candidate/p15_isolated_probe/run_probe.sh
+      - name: Destroy temporary signed binaries and logs, preserve no artifacts
+        if: always()
+        shell: bash
+        run: |
+          rm -f out/p15-ci.p12 out/p15-disposable.apk out/p15-unsigned.apk \
+            out/p15-aligned.apk out/p15-logcat-private.txt
+          echo 'P15_STRICT_DSH_VM_PRODUCTION=NOT_IMPLEMENTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P15_USER_DEVICE=UNCHANGED' >> "$GITHUB_STEP_SUMMARY"

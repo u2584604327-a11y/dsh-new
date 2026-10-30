@@ -1,0 +1,57 @@
+name: DSH P29 private Draft delivery and completed P28 release cleanup audit
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p29-private-release-audit.yml'
+permissions:
+  # Draft release listing requires push-equivalent access; the audit uses only GET.
+  contents: write
+jobs:
+  audit-private-delivery-and-completed-p28-cleanup:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p29-real-node-uid-private-canary-egress-20261029'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Independently verify exact 3-asset P29 private Draft and absence of completed P28 draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GH_REPO" --jq '.visibility')" = private
+          gh api "repos/$GH_REPO/releases?per_page=100" > p29-releases.json
+          python3 - <<'PY'
+          import json
+          releases=json.load(open("p29-releases.json"))
+          matching=[r for r in releases if r["tag_name"]=="p29-private-arm64-node-boundary-20261029"]
+          if len(matching)!=1:raise SystemExit("P29_DRAFT_MISSING_OR_DUPLICATE")
+          release=matching[0]
+          if not release["draft"] or release["prerelease"] or release["published_at"] is not None:
+              raise SystemExit("P29_DRAFT_NOT_PRIVATE_UNPUBLISHED")
+          names=sorted(a["name"] for a in release["assets"])
+          expected=sorted([
+            "P29-Private-ARM64-Node-Boundary-Probe.apk",
+            "README-P29-PRIVATE.txt",
+            "SHA256SUMS.txt"])
+          if names!=expected:raise SystemExit("P29_ASSET_SET_INVALID")
+          apk=next(a for a in release["assets"] if a["name"].endswith(".apk"))
+          if not 50_000_000<=apk["size"]<=200_000_000:
+              raise SystemExit("P29_APK_MISSING_OR_IMPLAUSIBLE_SIZE")
+          if any(r["tag_name"]=="p28-private-device-probe-20261029"
+                 for r in releases):
+              raise SystemExit("P28_COMPLETED_DRAFT_NOT_CLEANED")
+          print("P29_REPO_PRIVATE=PASS")
+          print("P29_DRAFT_UNPUBLISHED_WITH_EXACT_3_ASSETS=PASS")
+          print("P29_PRIVATE_ORIGINAL_ARM64_APK_SIZE_BOUNDED=PASS")
+          print("P28_COMPLETED_PRIVATE_TEST_DRAFT_DELETED=PASS")
+          print("P29_ACTUAL_PHONE_NODE_UID_AND_EGRESS=NOT_TESTED")
+          print("DSH_V139_PRODUCTION_RELEASE=BLOCKED")
+          PY
+          echo 'P29_PRIVATE_DRAFT_REMOTE_ASSET_AUDIT=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P28_PREVIOUS_OWNER_TEST_RELEASE_DELETED=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P29_REAL_PHONE_NODE_OS_BOUNDARY=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'DSH_V139_RELEASE=BLOCKED' >> "$GITHUB_STEP_SUMMARY"
+          rm -f p29-releases.json

@@ -1,0 +1,46 @@
+name: DSH native diagnostic bundle constructor reachability audit
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'host_candidate/audit_native_bundle_constructors.py'
+      - '.github/workflows/native-bundle-callers.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  exact-native-bundle-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Download exact v138 from PRIVATE Releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input out
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk --dir input
+          printf '%s  %s\n' 3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk | sha256sum -c -
+      - name: Enumerate all native diagnostic ZIP builders
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -r host_candidate/requirements.txt
+          python host_candidate/audit_native_bundle_constructors.py \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk --report out/bundle-builder-callers.json
+          echo 'NATIVE_DIRECT_BUNDLE_BUILDER_CALLS=ENUMERATED_STATIC' >> "$GITHUB_STEP_SUMMARY"
+          echo 'NODE_JNI_DYNAMIC_PATHS=NOT_VERIFIED' >> "$GITHUB_STEP_SUMMARY"
+      - name: No original APK or secret artifacts uploaded
+        if: always()
+        run: |
+          echo 'Read-only DEX names and callsites only; APK remains private; no uploaded artifacts.' >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.dsh.p15probe">
+  <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="28"/>
+  <!-- Deliberately no INTERNET, storage, shell, notification or device permissions. -->
+  <application android:label="DSH P15 disposable isolated UID test" android:hasCode="true">
+    <activity android:name=".P15ProbeActivity" android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN"/>
+        <category android:name="android.intent.category.LAUNCHER"/>
+      </intent-filter>
+    </activity>
+    <service android:name=".P15IsolatedService" android:process=":isolated"
+      android:isolatedProcess="true" android:exported="false" />
+  </application>
+</manifest>

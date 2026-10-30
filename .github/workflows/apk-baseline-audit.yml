@@ -1,0 +1,126 @@
+name: APK baseline identity audit (no signing)
+
+on:
+  release:
+    types: [published, edited]
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: "Pre-existing signed APK release to verify; never modifies APK"
+        required: true
+        type: choice
+        options:
+          - v135
+          - v138
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dsh-private-apk-audit
+  cancel-in-progress: false
+
+jobs:
+  identity-only:
+    if: github.event_name == 'workflow_dispatch' || github.event.release.tag_name == 'dsh-baseline-v135' || github.event.release.tag_name == 'dsh-p0-v138'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BASELINE: ${{ inputs.baseline || 'auto' }}
+    steps:
+      - name: Download original release asset (private repository only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$BASELINE" = auto ]; then
+            case "$GITHUB_REF_NAME" in
+              dsh-baseline-v135) BASELINE=v135 ;;
+              dsh-p0-v138) BASELINE=v138 ;;
+              *) echo "::error::Unexpected release tag"; exit 1 ;;
+            esac
+          fi
+          case "$BASELINE" in
+            v135)
+              TAG=dsh-baseline-v135
+              APK=DSH0.4.1-v135-browser-native-device-v1.3.5-fixed-signature.apk
+              EXPECTED_SHA=394adfbe85b81ce46c285b1c531ffa307432d777e17af04fe5418272c5cc2e99
+              EXPECTED_VERSION=135
+              ;;
+            v138)
+              TAG=dsh-p0-v138
+              APK=DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+              EXPECTED_SHA=3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5
+              EXPECTED_VERSION=138
+              ;;
+            *) echo "::error::Invalid baseline"; exit 1 ;;
+          esac
+          mkdir -p work
+          gh release download "$TAG" --repo "$GH_REPO" --pattern "$APK" --dir work --clobber
+          test -s "work/$APK"
+          echo "APK_FILE=work/$APK" >> "$GITHUB_ENV"
+          echo "EXPECTED_SHA=$EXPECTED_SHA" >> "$GITHUB_ENV"
+          echo "EXPECTED_VERSION=$EXPECTED_VERSION" >> "$GITHUB_ENV"
+
+      - name: Compare exact known APK SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' "$EXPECTED_SHA" "$APK_FILE" | sha256sum -c -
+          unzip -tqq "$APK_FILE"
+          echo "APK_SHA256_MATCH=PASS" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prepare Android APK identity tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="$(printenv ANDROID_HOME || printenv ANDROID_SDK_ROOT || echo /usr/local/lib/android/sdk)"
+          if [ -x "$SDK_ROOT/build-tools/35.0.0/apksigner" ] &&
+             [ -x "$SDK_ROOT/build-tools/35.0.0/aapt" ]; then
+            echo "SDK_BUILD_TOOLS=$SDK_ROOT/build-tools/35.0.0" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          SDKMANAGER=""
+          if command -v sdkmanager >/dev/null 2>&1; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          else
+            SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -perm /111 2>/dev/null | head -n 1 || true)"
+          fi
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::SDK manager unavailable. No identity PASS permitted."
+            exit 1
+          fi
+          (yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses > /dev/null) || true
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" "build-tools;35.0.0"
+          test -x "$SDK_ROOT/build-tools/35.0.0/apksigner"
+          test -x "$SDK_ROOT/build-tools/35.0.0/aapt"
+          echo "SDK_BUILD_TOOLS=$SDK_ROOT/build-tools/35.0.0" >> "$GITHUB_ENV"
+
+      - name: Verify Android package, v2 signature and fixed certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          badging="$("$SDK_BUILD_TOOLS/aapt" dump badging "$APK_FILE")"
+          pkgline="$(printf '%s\n' "$badging" | grep "^package: " | head -n1)"
+          printf '%s\n' "$pkgline"
+          [[ "$pkgline" == *"name='com.dsh.android'"* ]]
+          [[ "$pkgline" == *"versionCode='$EXPECTED_VERSION'"* ]]
+          "$SDK_BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK_FILE" > identity.txt
+          grep -F "Verified using v2 scheme (APK Signature Scheme v2): true" identity.txt
+          cert="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' identity.txt | head -n1 | tr 'A-F' 'a-f' | tr -d '[:space:]')"
+          expected_cert="90072b7de43e96999be92d99869ce5e5b7639b5f2449417b99a1790831b60ff8"
+          test "$cert" = "$expected_cert"
+          echo "APK_PACKAGE=PASS" >> "$GITHUB_STEP_SUMMARY"
+          echo "APK_VERSION=PASS" >> "$GITHUB_STEP_SUMMARY"
+          echo "APK_V2_SIGNATURE=PASS" >> "$GITHUB_STEP_SUMMARY"
+          echo "CERTIFICATE_SHA256=PASS" >> "$GITHUB_STEP_SUMMARY"
+          echo "ART=NOT_VERIFIED" >> "$GITHUB_STEP_SUMMARY"
+          echo "HOST_GATE=NOT_VERIFIED" >> "$GITHUB_STEP_SUMMARY"
+          echo "NEW_APK_BUILT=NO" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Ensure original APK is not uploaded as an artifact
+        if: always()
+        shell: bash
+        run: |
+          echo "No APK, signing private key, or diagnostics uploaded to Actions artifacts." >> "$GITHUB_STEP_SUMMARY"

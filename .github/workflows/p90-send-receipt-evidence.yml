@@ -1,0 +1,92 @@
+name: P90 bubble false-SENT failclosed receipt and original source-locked owner evidence
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p90_send_evidence/**'
+      - 'host_candidate/P90_SEND_RECEIPT_AND_MAIN_STALL_GATE.md'
+      - '.github/workflows/p90-send-receipt-evidence.yml'
+permissions:
+  contents: read
+jobs:
+  p90-receipt-gate-and-original-locators:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p90-failclosed-send-evidence-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p89-existing-inputstream-tool-delta-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Failclosed send/state and wallet/privilege JVM regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = 'u2584604327-a11y/dshe'
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          mkdir -p .p90_private/jvm
+          javac --release 8 -d .p90_private/jvm \
+            host_candidate/p90_send_evidence/src/com/dsh/android/p90/P90SendReceiptGate.java \
+            host_candidate/p90_send_evidence/src/com/dsh/android/p90/P90EvidenceProjection.java \
+            host_candidate/p90_send_evidence/test/com/dsh/android/p90/P90SendReceiptGateTest.java
+          java -cp .p90_private/jvm com.dsh.android.p90.P90SendReceiptGateTest | tee .p90_private/jvm.log
+          for gate in P90_FALSE_SENT_EMPTY_DISABLED_REJECTED=PASS \
+                      P90_CLICK_SENT_NEVER_EQUALS_MODEL_TURN=PASS \
+                      P90_DEDUP_UNKNOWN_NO_BLIND_RETRY=PASS \
+                      P90_UNAUTH_BALANCE_UNKNOWN_PRIVILEGE_EVIDENCE=PASS; do
+            grep -Fxq "$gate" .p90_private/jvm.log
+          done
+          echo 'P90_FAIL_CLOSED_RECEIPT_AND_STATE_JVM=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Source pinned log-method inventory (no original source exfiltration)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt >/dev/null
+          python host_candidate/p90_send_evidence/p90_original_bubble_owner.py --selftest
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO" \
+            --pattern 'DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk' --dir .p90_private
+          file='.p90_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk'
+          printf '%s  %s\n' '3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5' "$file" | sha256sum -c - >/dev/null
+          python host_candidate/p90_send_evidence/p90_original_bubble_owner.py --original "$file" > .p90_private/owner.log
+          grep -Fxq 'P90_ORIGINAL_BUBBLE_SEND_SUCCESS_INTEGRATION=NOT_PROVEN' .p90_private/owner.log
+          grep '^P90_PINNED_ORIGINAL_LOG_OWNER_CATEGORIES=' .p90_private/owner.log >> "$GITHUB_STEP_SUMMARY"
+          python - <<'PY'
+          import json,pathlib
+          lines=pathlib.Path('.p90_private/owner.log').read_text().splitlines()
+          results=[line.removeprefix('P90_PINNED_ORIGINAL_LOG_OWNER_CATEGORIES=')
+                   for line in lines if line.startswith('P90_PINNED_ORIGINAL_LOG_OWNER_CATEGORIES=')]
+          if len(results)!=1:raise RuntimeError('P90_NO_UNIQUE_OWNER_REPORT')
+          data=json.loads(results[0])
+          print('P90_CATEGORICAL_ORIGINAL_METHOD_COUNT='+str(data['matching_method_count']))
+          print('P90_CATEGORICAL_LOG_COUNTS='+json.dumps(
+             data['matched_log_family_counts'],sort_keys=True))
+          owners=[{'surface':item['surface'],'dex':item['dex'],
+                   'labels':item['labels'],'api_categories':item['api_categories']}
+                  for item in data['method_categories']
+                  if 'BUBBLE_INSERT_RESULT' in item['labels']
+                  or 'BUBBLE_CLICK_RESULT' in item['labels']]
+          print('P90_BUBBLE_OWNER_CALL_CATEGORIES='+json.dumps(owners,sort_keys=True))
+          print('P90_ORIGINAL_METHOD_ID_NOT_EXPOSED_TO_LOG=YES')
+          PY
+          echo 'P90_ORIGINAL_OWNER_READONLY_SHA_PINNED_SCAN=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Clean exact original and publish accurate blockers
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p90_private
+          {
+            echo 'P90_ORIGINAL_BUBBLE_ACTIVITY_JAVABRIDGE=NOT_PATCHED'
+            echo 'P90_REAL_PHONE_SEND_AND_UI=NOT_VERIFIED'
+            echo 'P90_CRASH_194301_STACK_FILE=NOT_PROVIDED'
+            echo 'P90_MAIN_THREAD_STALL_CAUSE=UNKNOWN'
+            echo 'P90_NO_NEW_APK_NO_SIGNING_NO_PRIVATE_ARTIFACTS=YES'
+            echo 'P90_NO_PRODUCTION_RESTART_NO_GATEWAY_PORT_CHANGE=YES'
+          } >> "$GITHUB_STEP_SUMMARY"

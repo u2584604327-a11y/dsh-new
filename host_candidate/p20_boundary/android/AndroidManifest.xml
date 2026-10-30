@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.dsh.p20.boundary">
+  <uses-sdk android:minSdkVersion="34" android:targetSdkVersion="35"/>
+  <!-- Deliberately give only the trusted host INTERNET to prove that an
+       isolatedProcess child does NOT inherit the permission. No external requests. -->
+  <uses-permission android:name="android.permission.INTERNET"/>
+  <application android:label="P20 disposable loopback boundary proof"
+      android:usesCleartextTraffic="false">
+    <activity android:name=".P20BoundaryActivity" android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN"/>
+        <category android:name="android.intent.category.LAUNCHER"/>
+      </intent-filter>
+    </activity>
+    <service android:name=".P20IsolatedWorker" android:process=":restricted"
+        android:isolatedProcess="true" android:exported="false"/>
+  </application>
+</manifest>

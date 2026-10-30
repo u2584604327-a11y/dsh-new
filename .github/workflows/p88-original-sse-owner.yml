@@ -1,0 +1,59 @@
+name: P88 pinned original DSH SSE client and UI API owner localization
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p88_original_stream_owner/**'
+      - 'host_candidate/P88_ORIGINAL_SSE_NETWORK_UI_OWNER_GATE.md'
+      - '.github/workflows/p88-original-sse-owner.yml'
+permissions:
+  contents: read
+jobs:
+  original-dex-stream-to-chat-owner-audit:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p88-original-chat-sse-consumer-ui-owners-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p87-omnigate-openai-sse-incremental-ui-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Exact SHA-pinned original and safe synthetic auditor selftest
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          python host_candidate/p88_original_stream_owner/p88_stream_owner_audit.py --selftest
+          mkdir -p .p88_original_private
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --dir .p88_original_private
+          f=.p88_original_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+          printf '%s  %s\n' 3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 "$f" | sha256sum -c - >/dev/null
+          echo 'P88_EXACT_ORIGINAL_SOURCE_SHA_AND_CLASSIFIER=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Read-only original network/SSE and chat UI callsite classes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python host_candidate/p88_original_stream_owner/p88_stream_owner_audit.py \
+            --original .p88_original_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            > .p88_original_private/audit.log
+          grep -Fxq 'P88_PINNED_ORIGINAL_DSH_STREAM_UI_SURFACE_AUDIT=PASS' .p88_original_private/audit.log
+          grep -Fxq 'P88_ORIGINAL_STREAM_RENDER_PATH_PROVEN=NO' .p88_original_private/audit.log
+          grep '^P88_CATEGORICAL_ONLY=' .p88_original_private/audit.log | tee -a "$GITHUB_STEP_SUMMARY"
+          echo 'P88_NO_ORIGINAL_METHOD_NAMES_OR_SECRET_VALUES_PRINTED=YES' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always remove private pinned source
+        if: always()
+        run: |
+          rm -rf .p88_original_private
+          echo 'P88_PRODUCTION_DSH_SSE_TO_TEXTVIEW=NOT_WIRED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P88_ORIGINAL_PHONE_OR_GATEWAY_OWNER_UNCHANGED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P88_FIXED_SIGNED_V139=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

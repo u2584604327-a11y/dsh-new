@@ -1,0 +1,142 @@
+name: DSH P53 real child-start ACK before P37 java Process handoff
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p48_process_proxy/**'
+      - 'host_candidate/p43_original_service/android/**'
+      - 'host_candidate/p52_engine_handoff/**'
+      - 'host_candidate/p53_child_start/**'
+      - 'host_candidate/p50_original_arm64_node/**'
+      - 'host_candidate/P53_CHILD_STARTED_AND_ORIGINAL_RUNTIME_CONTRACT.md'
+      - '.github/workflows/p53-real-child-start-ack.yml'
+permissions:
+  contents: read
+concurrency:
+  group: p53-child-start-test-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  original-dsh-derived-start-ack-process-callback-x86:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p53-child-start-ack-and-runtime-intake-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p52-safe-actions-artifact-inventory-and-engine-contract-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      P47_NO_HOST_FALLBACK: '1'
+      P49_NODE_STAGE: '0'
+      P51_SIDE_BY_SIDE: '1'
+      P51_X86_SIMULATOR_ONLY: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Fail-closed private exact source/build preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          test "$P47_NO_HOST_FALLBACK" = 1
+          test "$P51_SIDE_BY_SIDE" = 1
+          bash -n host_candidate/p43_original_service/build_embedded_emulator_apk.sh
+          bash -n host_candidate/p53_child_start/run_x86_start_ack.sh
+          python host_candidate/p51_side_by_side/test_manifest.py
+          mkdir -p .p53_jvm_classes
+          javac --release 8 -d .p53_jvm_classes \
+            host_candidate/p53_child_start/src/com/dsh/android/p53/P53StartOrder.java \
+            host_candidate/p53_child_start/test/com/dsh/android/p53/P53StartOrderTest.java
+          java -cp .p53_jvm_classes com.dsh.android.p53.P53StartOrderTest | tee .p53-jvm.txt
+          grep -Eq '^P53_START_ORDER_JVM_NEGATIVE_CASES=PASS assertions=[0-9]+$' .p53-jvm.txt
+          grep -Fxq 'P53_HELLO_NEVER_AUTHORIZES_PROCESS_HANDOFF=PASS' .p53-jvm.txt
+          grep -Fxq 'P53_CHILD_STARTED_REQUIRED_BEFORE_STREAM_OR_EXIT=PASS' .p53-jvm.txt
+          grep -Fq 'LiveProcessReceiver' host_candidate/p48_process_proxy/android/com/dsh/android/p48/P48HostProcessProbe.java
+          grep -Fq 'P52_LIVE_P37_JAVA_PROCESS_FROM_ISOLATED_BINDER=PASS' host_candidate/p43_original_service/android/com/dsh/android/p43/P43ProbeActivity.java
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          sudo apt-get -qq update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -qq install -y apktool
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager";then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 | head -n1 || true)"
+          fi
+          test -n "$manager"
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Build test-only separate-package APK with live P37 Process callback
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash host_candidate/p43_original_service/build_embedded_emulator_apk.sh \
+            > .p52-private-build.log 2>&1 || {
+              grep -E 'P43_|P47_|P48_|P52_|error:|Traceback|RuntimeError' \
+                .p52-private-build.log | tail -n 20 || true
+              exit 1
+            }
+          grep -Fq 'P51_SIGNED_APK_SEPARATE_PACKAGE_NO_PERMISSIONS=PASS' .p52-private-build.log
+          grep -Fq 'P47_REBUILT_ORIGINAL_PRIMARY_ENGINE_BRIDGE_NO_HOST_START=PASS' .p52-private-build.log
+          echo 'P53_BUILD_ORIGINAL_DSH_DERIVED_START_ACK_CLASS=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: KVM when present
+        shell: bash
+        run: if test -c /dev/kvm;then sudo chmod 666 /dev/kvm;fi
+      - name: Original host Binder live Java Process callback on Android35
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: bash host_candidate/p53_child_start/run_x86_start_ack.sh
+      - name: Always discard private original APK, derived bytes and disposable cert
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p43tmp .p52-private-build.log .p53_jvm_classes .p53-jvm.txt
+          echo 'P53_ORIGINAL_USER_DSH_INSTALL_CHANGED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P53_ORIGINAL_PRODUCTION_ENGINE_MANAGER_RUNNING=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P53_FIXED_SIGNED_V139=BLOCKED' >> "$GITHUB_STEP_SUMMARY"
+
+  exact-original-engine-asset-inventory:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p53-child-start-ack-and-runtime-intake-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p52-safe-actions-artifact-inventory-and-engine-contract-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Verify private exact original APK and report only engine container categories
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          python -m py_compile host_candidate/p53_child_start/p53_exact_original_engine_asset_inventory.py
+          mkdir -p .p53_private_runtime
+          gh release download dsh-baseline-v135dsh-baseline-v135 \
+            --repo "$GH_REPO" --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --dir .p53_private_runtime
+          original=.p53_private_runtime/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+          test -s "$original"
+          python host_candidate/p53_child_start/p53_exact_original_engine_asset_inventory.py "$original" \
+            | tee .p53_engine_categories.txt
+          grep -Fxq 'P53_EXACT_SIGNED_V138_ENGINE_ASSET=PASS' .p53_engine_categories.txt
+          grep -Fxq 'P53_ENGINE_SCRIPT_CONTENT_EXTRACTED_OR_UPLOADED=NO' .p53_engine_categories.txt
+          echo 'P53_ENGINE_ASSET_STATIC_INVENTORY=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P53_REAL_NODE_PRODUCTION_STARTUP=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always delete original APK and per-run runtime metadata
+        if: always()
+        shell: bash
+        run: rm -rf .p53_private_runtime .p53_engine_categories.txt

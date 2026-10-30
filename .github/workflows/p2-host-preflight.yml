@@ -1,0 +1,113 @@
+name: DSH P2 host DEX and P6 asset integration preflight
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'host_candidate/patch_deny.py'
+      - 'host_candidate/patch_browser.py'
+      - 'host_candidate/patch_privacy.py'
+      - 'host_candidate/verify_p2_scope.py'
+      - 'host_candidate/verify_diagnostic_egress_sites.py'
+      - 'host_candidate/verify_p6_asset_preimages.py'
+      - 'host_candidate/requirements.txt'
+      - '.github/workflows/p2-host-preflight.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dsh-p2-host-preflight
+  cancel-in-progress: false
+
+jobs:
+  exact-v138-integration-preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: host_candidate/requirements.txt
+      - name: Download pinned inputs from this private repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input out
+          gh release download 'dsh-baseline-v135dsh-baseline-v135' --repo "$GH_REPO" \
+            --pattern 'DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk' --dir input
+          gh release download dsh-source-v139-p6 --repo "$GH_REPO" \
+            --pattern 'DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip' --dir input
+          printf '%s  %s\n' '3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5' \
+            'input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk' | sha256sum -c -
+          printf '%s  %s\n' '3af586c2c83d1aea67d119357672559eb09371c77ef4e06900bb697c06d11fd5' \
+            'input/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip' | sha256sum -c -
+      - name: Install pinned offline analysis libraries
+        run: python -m pip install -r host_candidate/requirements.txt
+      - name: Replay native bounded patch in memory and validate full method scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          python host_candidate/verify_p2_scope.py \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --report out/p2-bounded-dex-report.json
+          echo 'P2_BOUNDED_DEX_IN_MEMORY=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Prove known original native HTTP sink is removed in bounded candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python host_candidate/verify_diagnostic_egress_sites.py \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --report out/native-diagnostic-sink-delta.json
+          echo 'P2_KNOWN_NATIVE_DIAGNOSTIC_HTTP_SINK_REMOVED=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'ALL_NATIVE_NODE_EGRESS_CLOSED=NOT_VERIFIED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify P6 assets can overlay exact v138 without mismatched preimages
+        shell: bash
+        run: |
+          set -euo pipefail
+          python host_candidate/verify_p6_asset_preimages.py \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            input/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip \
+            --report out/p6-v138-asset-preimages.json
+          echo 'P6_ASSET_V138_PREIMAGES=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Explicitly mark all remaining system safety gates
+        if: always()
+        run: |
+          {
+            echo 'APK_CREATED=NO'
+            echo 'APK_SIGNED=NO'
+            echo 'ART=NOT_VERIFIED'
+            echo 'HOST_NATIVE_NODE_TOTAL_GATE=NOT_VERIFIED'
+            echo 'NATIVE_DIAGNOSTIC_REVIEW_CONNECTED=NO'
+            echo 'DEVICE_SETTINGS_VISIBLE=NO'
+            echo 'STORAGE_ISOLATION=NOT_VERIFIED'
+            echo 'PHONE_V138_UNCHANGED=YES'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Summarize verified hashes without storing artifacts
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,os,pathlib
+          out=pathlib.Path('out')
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as summary:
+              for label,file in [('P2 exact DEX scope','p2-bounded-dex-report.json'),('P6 asset preimages','p6-v138-asset-preimages.json')]:
+                  path=out/file
+                  if not path.exists():
+                      summary.write(f'- {label}: NOT_COMPLETED\n')
+                      continue
+                  data=json.loads(path.read_text())
+                  if 'P2_BOUNDED_DEX_SHA256' in data:
+                      summary.write(f"- {label}: PASS; bounded DEX SHA256 = `{data['P2_BOUNDED_DEX_SHA256']}`; unchanged method bodies = {data['P2_UNCHANGED_METHOD_CODE_BODIES']}\n")
+                  else:
+                      summary.write(f"- {label}: {data.get('V138_ASSET_OVERLAY_PREIMAGES', 'NOT_VERIFIED')}; overlay paths = {len(data['overlay_files'])}\n")
+              summary.write('- No original APK, patched DEX, source payloads or signing credentials are uploaded as Actions artifacts.\n')
+          PY

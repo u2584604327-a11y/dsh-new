@@ -1,0 +1,78 @@
+name: DSH P33 exact v138 Android host Node entrypoint and Binder injection graph
+on:
+  pull_request:
+    paths:
+      - 'host_candidate/p33_original_host_entry_graph.py'
+      - 'host_candidate/P33_ORIGINAL_HOST_ENTRY_EDGE_GATE.md'
+      - '.github/workflows/p33-original-host-entry-graph.yml'
+permissions:
+  contents: read
+jobs:
+  exact-original-host-entrypoint-audit:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Confirm private original source and install exact parser versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GH_REPO" --jq '.visibility')" = private
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          python -m py_compile host_candidate/p33_original_host_entry_graph.py
+          echo 'P33_EXACT_PRIVATE_SOURCE_ONLY=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Fetch privately held original SHA-pinned v138 in ephemeral CI only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p33tmp
+          gh release download dsh-baseline-v135dsh-baseline-v135 \
+            --repo "$GH_REPO" --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --dir .p33tmp
+          printf '%s  %s\n' \
+            3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            .p33tmp/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk | sha256sum -c -
+          echo 'P33_ORIGINAL_SIGNED_V138_INPUT_SHA=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Trace actual Android host method invokes into Node/broker/bridge entrypoints
+        shell: bash
+        env:
+          LOGURU_LEVEL: ERROR
+        run: |
+          set -euo pipefail
+          python host_candidate/p33_original_host_entry_graph.py \
+            .p33tmp/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --report .p33tmp/p33-private-host-entry-graph.json
+          python - <<'PY'
+          import json
+          r=json.load(open(".p33tmp/p33-private-host-entry-graph.json"))
+          assert r["exact_baseline_sha256"]=="3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5"
+          assert r["app_methods_with_code"]>2000
+          assert len(r["two_hop_reverse_callsites"])>0
+          assert r["original_v138_apk_modified"] is False
+          print("P33_REAL_MAIN_DEX_GRAPH_INSPECTED=PASS")
+          print("P33_NATIVE_METHOD_INVOCATION_EDGE_MAP=PASS_STATIC")
+          print("P33_RUNTIME_NODE_ORIGINAL_DSH_MIGRATED=NO")
+          print("P33_APK_MODIFICATION_OR_SIGNING=NO")
+          PY
+          echo 'P33_V138_REAL_DEX_DIRECT_NATIVE_HOST_GRAPH=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P33_INVOCATION_EDGE_NOT_PRODUCTION_WIRING=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P33_REAL_DSH_V139_HOST_IPC_WIRING=BLOCKED_NOT_IMPLEMENTED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Delete original signed APK and all derived metadata after test
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p33tmp
+          echo 'P33_ORIGINAL_SIGNING_KEY_USED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P33_NO_APK_ACTIONS_ARTIFACT_OR_PRIVATE_RELEASE=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P33_PRODUCTION_AND_PHONE_UNCHANGED=YES' >> "$GITHUB_STEP_SUMMARY"

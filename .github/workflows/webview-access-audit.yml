@@ -1,0 +1,46 @@
+name: DSH native WebView IllegalAccessError bounded diagnosis
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'host_candidate/audit_webview_access.py'
+      - '.github/workflows/webview-access-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exact-v138-access:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Get SHA256-pinned private v138 source
+        shell: bash
+        run: |
+          mkdir -p input out
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk --dir input
+          printf '%s  %s\n' 3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk | sha256sum -c -
+      - name: Install pinned DEX parser
+        run: python -m pip install -r host_candidate/requirements.txt
+      - name: Inspect currentWebView method access flags and callsites
+        shell: bash
+        run: |
+          set -euo pipefail
+          python host_candidate/audit_webview_access.py input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --report out/webview-access-audit.json
+          echo 'WEBVIEW_METHOD_ACCESS_AUDIT=PASS_READ_ONLY' >> "$GITHUB_STEP_SUMMARY"
+          echo 'DEX_ACCESS_FLAG_PATCH=NOT_PERFORMED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'ART=NOT_VERIFIED' >> "$GITHUB_STEP_SUMMARY"

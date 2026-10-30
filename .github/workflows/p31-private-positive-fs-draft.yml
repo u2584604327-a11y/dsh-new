@@ -1,0 +1,125 @@
+name: DSH P31 original Node positive filesystem control and private path visibility
+on:
+  pull_request:
+    types: [opened]
+    paths:
+      - 'host_candidate/p31_device_probe/**'
+      - 'host_candidate/P31_NODE_FS_POSITIVE_CONTROL_GATE.md'
+      - '.github/workflows/p31-private-positive-fs-draft.yml'
+permissions:
+  contents: write
+concurrency:
+  group: dsh-p31-private-draft-node-os-boundary
+  cancel-in-progress: false
+jobs:
+  owner-approved-p31-private-draft-release:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'opened' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p31-node-positive-fs-control-20261029' &&
+      github.event.pull_request.base.ref == 'dsh/p30-binder-uid-and-canary-liveness-20261029'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      P31_TAG: p31-private-positive-fs-control-20261029
+      P30_TAG: p30-private-arm64-node-boundary-20261029
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify private target and no preexisting P31 release or tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          visibility="$(gh api "repos/$GH_REPO" --jq '.visibility')"
+          if test "$visibility" != "private";then
+            echo "::error::Source release must remain PRIVATE";exit 1
+          fi
+          if gh release view "$P31_TAG" --repo "$GH_REPO" >/dev/null 2>&1;then
+            echo "::error::P31 test release already exists - no automatic overwrite";exit 1
+          fi
+          if gh api "repos/$GH_REPO/git/ref/tags/$P31_TAG" >/dev/null 2>&1;then
+            echo "::error::P31 tag already exists";exit 1
+          fi
+          echo 'P31_PRIVATE_REPOSITORY_GATE=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify source and build exact ARM64 private original Node P31 Android probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            host_candidate/p21_real_arm64_loader_pack.py \
+            host_candidate/p25_original_node_alias_stager.py \
+            host_candidate/p28_device_probe/emit_runtime_lock.py
+          bash host_candidate/p31_device_probe/build_private_apk.sh
+      - name: Validate no accidental privileged permission or arbitrary user-code path
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s delivery/P31-Private-ARM64-Node-Boundary-Probe.apk
+          test -s delivery/SHA256SUMS.txt
+          test -s delivery/README-P31-PRIVATE.txt
+          test "$(grep -Ec 'android:isolatedProcess="true"' host_candidate/p31_device_probe/android/AndroidManifest.xml)" -eq 1
+          test "$(grep -Ec 'android:exported="false"' host_candidate/p31_device_probe/android/AndroidManifest.xml)" -eq 1
+          if grep -Fq '<uses-permission' host_candidate/p31_device_probe/android/AndroidManifest.xml;then
+            echo "::error::No Android permissions allowed";exit 1
+          fi
+          grep -Fq '"--eval",FIXED_JS' host_candidate/p31_device_probe/android/com/dsh/p31/nodeprobe/P31Worker.java
+          grep -Fq "getuid()" host_candidate/p31_device_probe/android/com/dsh/p31/nodeprobe/P31Worker.java
+          grep -Fq "198.51.100.1" host_candidate/p31_device_probe/android/com/dsh/p31/nodeprobe/P31Worker.java
+          echo 'P31_FIXED_JS_ONLY_NO_MANIFEST_PERMISSIONS=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+      - name: Create exact three-asset PRIVATE DRAFT RELEASE only
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          gh release create "$P31_TAG" \
+            delivery/P31-Private-ARM64-Node-Boundary-Probe.apk \
+            delivery/SHA256SUMS.txt \
+            delivery/README-P31-PRIVATE.txt \
+            --repo "$GH_REPO" \
+            --target "$CANDIDATE_SHA" \
+            --draft \
+            --title 'PRIVATE P31 actual original Node OS boundary probe - DO NOT PUBLISH' \
+            --notes 'PRIVATE TEST ONLY. Contains exact original v138 ARM64 Node. Standalone com.dsh.p31.nodeprobe API34+ arm64 app; no requested Android permissions. Only after owner tap, actual Node executes fixed getuid/read P31-only random canary/localhost and TEST-NET TCP connect probes. No payload, user files or upload. No strong VM/OS impersonation claim. Node and DSH v139 production isolation remain BLOCKED pending on-device report.'
+          check="$(gh release view "$P31_TAG" --repo "$GH_REPO" --json isDraft --jq '.isDraft')"
+          if test "$check" != "true";then
+            echo "::error::P31 must stay DRAFT; do not claim safe delivery";exit 1
+          fi
+          gh release view "$P31_TAG" --repo "$GH_REPO" \
+            --json assets --jq '[.assets[].name]|sort|join(",")' > out/p31/asset-check.txt
+          grep -Fq 'P31-Private-ARM64-Node-Boundary-Probe.apk' out/p31/asset-check.txt
+          grep -Fq 'README-P31-PRIVATE.txt' out/p31/asset-check.txt
+          grep -Fq 'SHA256SUMS.txt' out/p31/asset-check.txt
+          echo 'P31_PRIVATE_DRAFT_RELEASE_CREATE_AND_ASSETS=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P31_REAL_OWNER_PHONE_NODE_OS_DENIAL=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P31_DSH_V139_RELEASE=BLOCKED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Delete completed P30 private Draft only after P31 is verified
+        shell: bash
+        run: |
+          set -euo pipefail
+          old_draft="$(gh release view "$P30_TAG" --repo "$GH_REPO" --json isDraft --jq '.isDraft' || true)"
+          if test "$old_draft" = "true";then
+            old_assets="$(gh release view "$P30_TAG" --repo "$GH_REPO" --json assets --jq '[.assets[].name]|sort|join(",")')"
+            if test "$old_assets" = 'P30-Private-ARM64-Node-Boundary-Probe.apk,README-P30-PRIVATE.txt,SHA256SUMS.txt';then
+              gh release delete "$P30_TAG" --repo "$GH_REPO" --yes
+              if gh release view "$P30_TAG" --repo "$GH_REPO" >/dev/null 2>&1;then
+                echo "::error::P30 private Draft still exists after delete";exit 1
+              fi
+              echo 'P30_OLD_PRIVATE_DRAFT_DELETED=PASS' >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo 'P30_OLD_PRIVATE_DRAFT_CLEANUP=SKIPPED_ASSET_SET_CHANGED' >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            echo 'P30_OLD_PRIVATE_DRAFT_CLEANUP=SKIPPED_NOT_DRAFT_OR_ABSENT' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Always destroy signed baseline, temporary test key and all runtime bits
+        if: always()
+        shell: bash
+        run: |
+          rm -rf input out delivery
+          echo 'P31_ORIGINAL_DSH_SIGNER_AND_INSTALLED_V138_CHANGED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P31_NO_MAIN_MERGE_OR_PUBLIC_RELEASE=YES' >> "$GITHUB_STEP_SUMMARY"

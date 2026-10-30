@@ -1,0 +1,100 @@
+name: DSH P46 original APK bounded content-addressed synthetic bundle
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p43_original_service/**'
+      - 'host_candidate/p46_resource_bundle/**'
+      - 'host_candidate/P46_CONTENT_ADDRESSED_BUNDLE_GATE.md'
+      - '.github/workflows/p46-original-resource-bundle.yml'
+permissions:
+  contents: read
+concurrency:
+  group: p46-original-bundle-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  exact-original-two-part-hash-bundle-to-isolated-worker:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p46-content-addressed-runtime-bundle-contract-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p45-original-private-asset-fd-broker-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Require private repo and P46 canonical manifest JVM adversarial tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GH_REPO" --jq .visibility)" = private
+          python -m py_compile host_candidate/p43_original_service/inject_original_manifest.py
+          ! grep -Ei 'Runtime\.getRuntime\(\)\.exec\(|ProcessBuilder\(|\bsu\b|magisk|kernelsu|/dev/(mem|kmem)' \
+            host_candidate/p43_original_service/android/com/dsh/android/p43/P43IsolatedWorker.java
+          grep -Fq 'MODE_READ_ONLY' host_candidate/p43_original_service/android/com/dsh/android/p43/P43ProbeActivity.java
+          grep -Fq 'p45_readonly_fd' host_candidate/p43_original_service/android/com/dsh/android/p43/P43IsolatedWorker.java
+          grep -Fq 'p45_asset_sha256' host_candidate/p43_original_service/android/com/dsh/android/p43/P43ProbeActivity.java
+          grep -Fq 'P46WorkerBundle.verifyFixture' host_candidate/p43_original_service/android/com/dsh/android/p43/P43IsolatedWorker.java
+          grep -Fq 'P46HostBroker.attachFixture' host_candidate/p43_original_service/android/com/dsh/android/p43/P43ProbeActivity.java
+          mkdir -p .p46test
+          javac --release 8 -d .p46test \
+            host_candidate/p43_original_service/android/com/dsh/android/p43/P46ResourceBundle.java \
+            host_candidate/p43_original_service/android/com/dsh/android/p43/P46FixtureData.java \
+            host_candidate/p46_resource_bundle/test/com/dsh/android/p43/P46ResourceBundleTest.java
+          java -cp .p46test com.dsh.android.p43.P46ResourceBundleTest | tee .p46-tests.txt
+          grep -Eq '^P46_CONTENT_ADDRESSED_BUNDLE_JVM_TESTS=PASS assertions=[0-9]+$' .p46-tests.txt
+          echo 'P46_MANIFEST_AND_BYTE_TAMPER_JVM_GATES=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Install pinned original DSH private build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          sudo apt-get -qq update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -qq install -y apktool
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager"; then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 | head -n1 || true)"
+          fi
+          test -n "$manager"
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Rebuild exact original DSH APK with P46 two-part synthetic bundle broker
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash host_candidate/p43_original_service/build_embedded_emulator_apk.sh
+          echo 'P46_ORIGINAL_APK_SIGNATURE_AND_RESOURCE_GATES=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+      - name: Android emulator KVM when available
+        shell: bash
+        run: if test -c /dev/kvm; then sudo chmod 666 /dev/kvm; fi
+      - name: Fresh Android35 actual original DSH two-part Binder FD manifest pass
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: bash host_candidate/p46_resource_bundle/run_p46_emulator.sh
+      - name: Always delete original source APK, temporary signer and synthetic data
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p43tmp .p46test .p46-tests.txt
+          echo 'P46_TWO_SYNTHETIC_CONTENT_ADDRESSED_FDS=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P46_WORKER_ROOT_KERNEL_EXPLOITS_OR_SHIZUKU_USED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P46_REAL_USER_HOST_PRIVATE_FILES_READ_OR_SHARED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P46_ENGINE_NODE_SCRIPT_BROKER=NOT_IMPLEMENTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P46_ORIGINAL_PRODUCTION_FIXED_KEY_USED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P46_V139_RELEASE=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

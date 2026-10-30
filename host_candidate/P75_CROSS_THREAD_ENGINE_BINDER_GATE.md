@@ -1,0 +1,7 @@
+# P75 original P40 bridge and Android Binder cross-thread rendezvous
+
+P74 verified source-derived original MAIN-DEX P40ProcessBridge returning identical verified P37 Java Process on Android35, but its ThreadLocal lease was staged in the main Binder callback; production EngineManager coroutine runs on an arbitrary coroutine thread, so that architecture is not yet viable. P75 replaces *test-only* P74 same-thread lease with host-minted session bound, one-shot 12s bounded cross-thread rendezvous.
+
+The simulation uses a dedicated background thread that invokes original MAIN DEX P40 bridge via reflection with **only** the sidecar fixed /system/bin/id -u command. It blocks until real P68/P53 authenticated CHILD_STARTED on the main Binder callback delivers the P37 instance; the returned Process must be *identical*. Wrong UID, session, replay, early child, unrelated thread, pre-arm, timeout/cancel and arbitrary Node/production argv fail closed. No host ProcessBuilder fallback. The scratch P47 gate is patched under P51_SIDE_BY_SIDE=1 and P74_FIXTURE_ENGINE_BRIDGE=1 and P75_RENDEZVOUS_FIXTURE=1 only, with the source original P47 deny gate unchanged.
+
+Do not infer original EngineManager coroutine executed: the P75 caller is a carefully controlled stand-in thread. Actual original coroutine command/env/cwd and complete Node JS import tree (including native addons), parser READY, exit/cancel parity, and provider tool-results remain unproven. No fixed-signed update, no user phone changes, no real webpage or model calls.

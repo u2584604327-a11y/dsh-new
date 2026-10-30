@@ -1,0 +1,55 @@
+name: DSH P28 private original ARM64 Node offline device test APK
+on:
+  pull_request:
+    paths:
+      - 'host_candidate/p28_device_probe/**'
+      - '.github/workflows/p28-private-arm64-node-device-apk.yml'
+permissions:
+  contents: read
+concurrency:
+  group: dsh-p28-private-package-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  private-device-probe-apk:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p28-private-arm64-original-node-device-probe-20261029' &&
+      github.event.pull_request.base.ref == 'dsh/p27-arm64-android-executor-preflight-20261029'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build and verify independent SHA-pinned ARM64 original Node test APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            host_candidate/p21_real_arm64_loader_pack.py \
+            host_candidate/p25_original_node_alias_stager.py \
+            host_candidate/p28_device_probe/emit_runtime_lock.py
+          bash host_candidate/p28_device_probe/build_private_apk.sh
+      - name: Upload private authorized 7-day artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: P28-private-ARM64-original-Node-device-probe
+          path: |
+            delivery/P28-Private-ARM64-Node-Isolation-Probe.apk
+            delivery/SHA256SUMS.txt
+            delivery/README-P28-PRIVATE.txt
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Always destroy original signed v138 source, derived runtime and test signer
+        if: always()
+        shell: bash
+        run: |
+          rm -rf input out delivery
+          echo 'P28_ORIGINAL_DSH_SIGNER_USED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P28_NO_RELEASE_NO_USER_DEVICE_OR_PRODUCTION_CHANGES=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P28_REAL_DEVICE_NODE_VERSION_RESULT=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,78 @@
+name: DSH P54 exact original engine tree SHA and native-addon metadata
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p54_engine_tree/**'
+      - 'host_candidate/P54_IMMUTABLE_ENGINE_TREE_AUDIT_GATE.md'
+      - '.github/workflows/p54-original-engine-tree-audit.yml'
+permissions:
+  contents: read
+concurrency:
+  group: p54-exact-original-engine-tree-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  private-exact-v138-full-file-tree-sha256-readonly:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p54-immutable-engine-tar-hashes-and-native-addon-audit-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p53-child-start-ack-and-runtime-intake-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Private identity and synthetic-only defensive archive tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          test "$(gh api "repos/$GH_REPO" --jq .visibility)" = private
+          command -v readelf
+          python -m py_compile host_candidate/p54_engine_tree/p54_immutable_tar_audit.py
+          python -m py_compile host_candidate/p54_engine_tree/test_p54_immutable_tar_audit.py
+          python host_candidate/p54_engine_tree/test_p54_immutable_tar_audit.py | tee .p54_test_evidence.txt
+          grep -Eq '^P54_SAFE_TAR_HASH_NEGATIVE_TESTS=PASS assertions=[0-9]+$' .p54_test_evidence.txt
+          grep -Fxq 'P54_NO_REAL_JS_OR_EXTRACTED_ORIGINAL_PACKAGE_TEST=PASS' .p54_test_evidence.txt
+      - name: SHA-verify exact private original v138 and hash complete engine TAR in memory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p54_private
+          gh release download dsh-baseline-v135dsh-baseline-v135 \
+            --repo "$GH_REPO" --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --dir .p54_private
+          original=.p54_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+          test -s "$original"
+          python host_candidate/p54_engine_tree/p54_immutable_tar_audit.py "$original" \
+            | tee .p54_private/only-nonsensitive-summary.txt
+          grep -Fxq 'P54_EXACT_ORIGINAL_V138_ENGINE_CONTENT_HASH_AUDIT=PASS' \
+            .p54_private/only-nonsensitive-summary.txt
+          grep -Fxq 'P54_ARCHIVE_CANONICAL_NAMES_AND_NO_SYMLINKS=PASS' \
+            .p54_private/only-nonsensitive-summary.txt
+          grep -Fxq 'P54_EACH_REGULAR_TAR_MEMBER_FULLY_SHA256_STREAMED=PASS' \
+            .p54_private/only-nonsensitive-summary.txt
+          grep -Fxq 'P54_ARCHIVE_MEMBER_COUNT=30411' \
+            .p54_private/only-nonsensitive-summary.txt
+          grep -Fxq 'P54_CATEGORY_NATIVE_ADDON=9' \
+            .p54_private/only-nonsensitive-summary.txt
+          grep -Fxq 'P54_SCRIPT_SOURCE_AND_NATIVE_ADDONS_EXPORTED=NO' \
+            .p54_private/only-nonsensitive-summary.txt
+          echo 'P54_ORIGINAL_TAR_EVERY_MEMBER_HASHED=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P54_ADDON_DEPENDENCY_ELF_METADATA_READONLY=PASS_OR_CLASSIFIED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P54_PRODUCTION_NODE_STARTUP_AND_ANDROID_ADDON_LOAD=NOT_PROVEN' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P54_FIXED_SIGNED_V139=BLOCKED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always erase exact private original binary and transient summary
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p54_private .p54_test_evidence.txt
+          echo 'P54_ORIGINAL_APK_AND_ADDON_BYTES_UPLOADED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P54_PHONE_AND_PRODUCTION_ORIGINAL_DSH_CHANGED=NO' >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,63 @@
+name: DSH P52 exact Actions artifacts inventory read-only
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - '.github/workflows/p52-artifact-inventory.yml'
+      - 'host_candidate/p52_artifact_cleanup/**'
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: p52-repo-artifact-inventory-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  inventory-repo-artifacts:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p52-safe-actions-artifact-inventory-and-engine-contract-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p51-side-by-side-original-derived-arm64-probe-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Read current nonexpired artifacts, no writes and no credentials in logs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          python -m py_compile host_candidate/p52_artifact_cleanup/inventory.py
+          mkdir -p .p52only
+          : > .p52only/rows.jsonl
+          for page in $(seq 1 30); do
+            gh api "repos/$GH_REPO/actions/artifacts?per_page=100&page=$page" \
+              > .p52only/page.json
+            count="$(jq -r '.artifacts | length' .p52only/page.json)"
+            jq -c '.artifacts[]' .p52only/page.json >> .p52only/rows.jsonl
+            if test "$count" -lt 100; then break; fi
+            if test "$page" -eq 30;then
+              echo 'P52_BLOCKED_INVENTORY_EXCEEDS_3000';exit 1
+            fi
+          done
+          jq -s . .p52only/rows.jsonl > .p52only/full.json
+          python host_candidate/p52_artifact_cleanup/inventory.py .p52only/full.json \
+            | tee .p52only/report.txt
+          {
+            echo '## DSH actions artifact inventory (read-only)'
+            echo 'No artifact deleted by this workflow.'
+            echo '~~~'
+            cat .p52only/report.txt
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Always destroy local metadata snapshot
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p52only
+          echo 'P52_OWNER_DSH_RELEASES_AND_RUNS_MODIFIED=NO' >> "$GITHUB_STEP_SUMMARY"

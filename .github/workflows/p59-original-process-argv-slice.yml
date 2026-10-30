@@ -1,0 +1,71 @@
+name: DSH P59 exact original ProcessBuilder argument backward slice
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p59_backward_slice/**'
+      - 'host_candidate/P59_PROCESS_ARGV_BACKWARD_SLICE_GATE.md'
+      - '.github/workflows/p59-original-process-argv-slice.yml'
+permissions:
+  contents: read
+concurrency:
+  group: p59-private-argv-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  source-only-exact-v138-slice:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p59-exact-processbuilder-argument-backward-slice-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p58-engine-builder-command-ready-objectflow-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Private scope and synthetic negative regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          python -m py_compile host_candidate/p59_backward_slice/*.py
+          python host_candidate/p59_backward_slice/test_p59_backward_slice.py > .p59_synthetic.log
+          grep -Eq '^P59_BACKWARD_SLICE_SYNTHETIC_TESTS=PASS assertions=[0-9]+$' .p59_synthetic.log
+          grep -Fxq 'P59_SYNTHETIC_ORIGINAL_BYTES_USED=NO' .p59_synthetic.log
+          echo 'P59_SYNTHETIC_NEGATIVE_CASES=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Exact signed v138 source hash/tree and constructor backward-slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p59_private
+          gh release download dsh-baseline-v135dsh-baseline-v135 \
+            --repo "$GH_REPO" --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --dir .p59_private
+          original=.p59_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+          printf '%s  %s\n' \
+            3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            "$original" | sha256sum -c - >/dev/null
+          python host_candidate/p59_backward_slice/p59_backward_slice.py "$original" > .p59_private/aggregate_only.log
+          grep -Fxq 'P59_P58_P57_P56_P54_EXACT_SIGNED_V138=PASS' .p59_private/aggregate_only.log
+          grep -Fxq 'P59_PRIMARY_PROCESSBUILDER_CONSTRUCTOR_ANCHORED=PASS' .p59_private/aggregate_only.log
+          grep -Fxq 'P59_CONSTRUCTOR_ARGV_AND_DYNAMIC_READY_CONFIRMED=NO' .p59_private/aggregate_only.log
+          grep -Fxq 'P59_ORIGINAL_STRINGS_PATHS_ENV_OR_SCRIPT_EXPOSED=NO' .p59_private/aggregate_only.log
+          grep -Fxq 'P59_FIXED_SIGNED_V139=BLOCKED' .p59_private/aggregate_only.log
+          grep -E '^P59_(PROCESS_CONSTRUCTOR_DESCRIPTOR_CLASS|PROCESS_CONSTRUCTOR_REGISTER_COUNT|ARGUMENT_REGISTER_ENCODING_SUPPORTED|PARAMETER_BACKWARD_SOURCE_CATEGORIES|BRANCH_TARGETS_COUNT|UNRESOLVED_BRANCH_TARGETS|READY_STATIC_LOCAL_NEIGHBORHOOD)=' .p59_private/aggregate_only.log | tee -a "$GITHUB_STEP_SUMMARY"
+          echo 'P59_PRODUCTION_SCRIPT_AND_READY_CONDITION=NOT_PROVEN' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P59_P53_ORIGINAL_HOST_INTEGRATION=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P59_FIXED_SIGNED_V139=BLOCKED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Destroy temporary original APK and bounded reports
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p59_private .p59_synthetic.log
+          echo 'P59_ORIGINAL_BINARY_OR_JS_UPLOADED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P59_ORIGINAL_APP_OR_PHONE_CHANGED=NO' >> "$GITHUB_STEP_SUMMARY"

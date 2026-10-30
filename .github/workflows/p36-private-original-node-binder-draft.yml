@@ -1,0 +1,77 @@
+name: DSH P36 PRIVATE Draft real original ARM64 Node->Android Binder one-use UI APK
+on:
+  pull_request:
+    types: [synchronize]
+    paths:
+      - '.github/workflows/p36-private-original-node-binder-draft.yml'
+permissions:
+  contents: write
+concurrency:
+  group: p36-private-original-node-binder-owner-only
+  cancel-in-progress: false
+jobs:
+  owner-approved-p36-private-node-binder-draft:
+    if: >-
+      github.event.pull_request.number == 20 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p36-real-original-node-to-trusted-host-ipc-20261029' &&
+      github.event.pull_request.base.ref == 'dsh/p35-exact-engine-spawn-contract-20261029'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      P36_TAG: p36-private-real-original-node-binder-20261029
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Confirm private GitHub repository, owner-only draft identity and no existing release
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GH_REPO" --jq .visibility)" = private
+          if gh release view "$P36_TAG" --repo "$GH_REPO" >/dev/null 2>&1;then
+            echo "::error::P36 Draft already exists; never overwrite or publish";exit 1
+          fi
+          if gh api "repos/$GH_REPO/git/ref/tags/$P36_TAG" >/dev/null 2>&1;then
+            echo "::error::P36 release Git tag exists; stop";exit 1
+          fi
+          echo 'P36_PRIVATE_GITHUB_REPO_AND_UNIQUE_TAG=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Rebuild exact original ARM64 Node+10 libs with zero-permission Android APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash host_candidate/p36_node_to_binder/build_private_apk.sh
+          test -s delivery/P36-Private-ARM64-Original-Node-Binder-Bridge.apk
+          (cd delivery && sha256sum -c SHA256SUMS.txt)
+          test "$(find delivery -maxdepth 1 -type f | wc -l)" -eq 3
+          echo 'P36_REAL_ORIGINAL_ARM64_NODE_AND_APK_SHA16K_SIGNING=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Create authenticated exact THREE-ASSET private Draft release only
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          gh release create "$P36_TAG" \
+            delivery/P36-Private-ARM64-Original-Node-Binder-Bridge.apk \
+            delivery/README-P36-PRIVATE.txt delivery/SHA256SUMS.txt \
+            --repo "$GH_REPO" --target "$CANDIDATE_SHA" --draft \
+            --title 'PRIVATE P36 actual original Node to trusted Android Binder one-shot; DO NOT PUBLISH' \
+            --notes 'PRIVATE OWNER TEST ONLY. Separate ARM64 API34+ package com.dsh.p36.nodebridge with zero permissions and throwaway signature. Contains exact original signed v138 Node and 10 ELF libraries. After the user taps START, actual native Node getuid and fixed canonical stdout traverse nonexported Android isolatedProcess Worker and P32 trusted Binder. User must separately click native UI approval; pregrant request denied, one approval permitted, replay rejected. No user files/network/diagnostic upload, no original DSH MainActivity or EngineManager migration, no device/VM impersonation. Absolutely NOT a DSH v139 update.'
+          test "$(gh release view "$P36_TAG" --repo "$GH_REPO" --json isDraft --jq '.isDraft')" = true
+          actual="$(gh release view "$P36_TAG" --repo "$GH_REPO" --json assets --jq '[.assets[].name]|sort|join(",")')"
+          expected='P36-Private-ARM64-Original-Node-Binder-Bridge.apk,README-P36-PRIVATE.txt,SHA256SUMS.txt'
+          if test "$actual" != "$expected";then
+            echo "::error::P36 Draft exact asset list mismatch";exit 1
+          fi
+          echo 'P36_EXACT_3_ASSET_PRIVATE_DRAFT_VERIFIED=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P36_ON_DEVICE_REAL_ARM64_NODE_BINDER_AND_UI=AWAITING_OWNER_TEST' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P36_ORIGINAL_DSH_V139_HOST_WIRED=NO' >> "$GITHUB_STEP_SUMMARY"
+      - name: Destroy all original baseline bytes, APK build and temporary signer
+        if: always()
+        shell: bash
+        run: |
+          rm -rf input out delivery
+          echo 'P36_ORIGINAL_V138_APP_AND_SIGNATURE=UNCHANGED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P36_PRIVATE_DRAFT_MUST_REMAIN_UNPUBLISHED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P36_V139_PRODUCTION_RELEASE=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

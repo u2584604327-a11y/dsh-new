@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.dsh.p21.probe">
+  <uses-sdk android:minSdkVersion="34" android:targetSdkVersion="35"/>
+  <!-- No INTERNET, storage, debug, root or other Android permissions. -->
+  <application android:label="P21 original ARM64 Node isolation proof ONLY"
+     android:extractNativeLibs="true" android:usesCleartextTraffic="false">
+    <activity android:name=".P21ProbeActivity" android:exported="true">
+      <intent-filter><action android:name="android.intent.action.MAIN"/>
+        <category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+    </activity>
+    <service android:name=".P21RealNodeService" android:process=":isolate"
+       android:isolatedProcess="true" android:exported="false"/>
+  </application>
+</manifest>

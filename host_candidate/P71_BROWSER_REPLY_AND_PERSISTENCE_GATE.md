@@ -1,0 +1,9 @@
+# P71 browser result completion and WebView session test
+
+P70 fixed an actual P6 shared mailbox collision but not all no-reply reports. This patch adds P71ToolReplyOnce, with exactly one authenticated terminal callback per request, dropped late replies after timeout, distinct unknown-side-effect errors, and required explicit native approval for comment publication and message sends. The Java contract is tested without executing original DSH. It MUST be explicitly connected to the native result callback and model turn continuation before claiming the user workflow works.
+
+P71WebViewProfileProbe exercises Android WebView session persistence using only a synthetic HTTPS origin, synthetic CookieManager cookie and localStorage marker in the separately installed P51 sidecar. The Android 35 emulator sets both, force-stops the process and starts it again, and requires both to remain. Real Bilibili login is not exercised: site sessions, account state and anti-bot controls are distinct from WebView platform storage.
+
+The original DSH WebView and existing user profile are never cleared, replaced or accessed. No cookies or credentials are printed. The original application package is not changed. The official signer remains outside GitHub. This source is an integration candidate and controlled platform test, not yet a production fix.
+
+Remaining blocking release gates: connect native browser executor to plugin and provider tool_result+continuation; explicit approve/deny for posting; integrate persistent profile without data loss into original BrowserBridge; real original EngineManager isolated startup argv/env/cwd, READY, exit, cancellation and model tests; same-package fixed-signed upgrade with rollback and original feature parity. Never treat synthetic fixture READY as production READY.

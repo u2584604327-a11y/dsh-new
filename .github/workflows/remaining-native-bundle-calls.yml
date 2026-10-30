@@ -1,0 +1,43 @@
+name: DSH remaining native bundle callsite result/branch audit
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'host_candidate/audit_remaining_bundle_calls.py'
+      - '.github/workflows/remaining-native-bundle-calls.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  remaining-native-builders:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Fetch SHA-pinned existing signed v138 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input out
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk --dir input
+          printf '%s  %s\n' 3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk | sha256sum -c -
+          python -m pip install -r host_candidate/requirements.txt
+      - name: Inspect exact old native build-result branches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python host_candidate/audit_remaining_bundle_calls.py \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --report out/bundle-result-windows.json
+          echo 'NATIVE_BUNDLE_BRANCH_SITES=VERIFIED_READ_ONLY' >> "$GITHUB_STEP_SUMMARY"
+          echo 'NO_APK_PATCHED_OR_SIGNED=YES' >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,65 @@
+name: DSH P65 exact original ListBuilder branch CFG and alias gate
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p65_cfg_builder_alias/**'
+      - 'host_candidate/P65_LISTBUILDER_CFG_ALIAS_GATE.md'
+      - '.github/workflows/p65-original-listbuilder-cfg.yml'
+permissions:
+  contents: read
+jobs:
+  exact-v138-static-cfg:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p65-exact-original-list-builder-cfg-alias-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p64-exact-original-list-builder-append-provenance-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Synthetic CFG, escaped object and exception barriers
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          python -m py_compile host_candidate/p65_cfg_builder_alias/*.py
+          python host_candidate/p65_cfg_builder_alias/test_p65_cfg_builder_alias.py > .p65_synthetic.log
+          grep -Eq '^P65_SYNTHETIC_CFG_ALIAS=PASS assertions=[0-9]+$' .p65_synthetic.log
+          grep -Fxq 'P65_SYNTHETIC_NO_ORIGINAL_APK=YES' .p65_synthetic.log
+          echo 'P65_SYNTHETIC_BRANCH_ALIAS_ESCAPE=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Original exact signed v138 and path-sensitive ListBuilder audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p65_private
+          gh release download dsh-baseline-v135dsh-baseline-v135 \
+            --repo "$GH_REPO" --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --dir .p65_private
+          original=.p65_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+          printf '%s  %s\n' \
+            3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            "$original" | sha256sum -c - >/dev/null
+          python host_candidate/p65_cfg_builder_alias/p65_cfg_builder_alias.py "$original" > .p65_private/categorical.log
+          grep -Fxq 'P65_SIGNED_V138_P64_TO_P35_PROVENANCE=PASS' .p65_private/categorical.log
+          grep -Fxq 'P65_ORIGINAL_ARGV_PATH_AND_SCRIPT_VALUES_EMITTED=NO' .p65_private/categorical.log
+          grep -Fxq 'P65_FORMAL_SIGNED_V139_APK=BLOCKED' .p65_private/categorical.log
+          grep '^P65_BOUNDED_CFG_ALIAS_SUMMARY=' .p65_private/categorical.log | tee -a "$GITHUB_STEP_SUMMARY"
+          echo 'P65_P53_RUNTIME_START_AND_READY=NOT_PROVEN' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P65_FIXED_SIGNED_PRODUCTION_APK=BLOCKED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always delete exact original APK and temporary reports
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p65_private .p65_synthetic.log
+          echo 'P65_SIGNING_PRIVATE_KEY_NOT_ACCESSED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P65_OWNER_DSH_AND_PRODUCTION_UNCHANGED=YES' >> "$GITHUB_STEP_SUMMARY"

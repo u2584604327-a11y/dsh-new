@@ -1,0 +1,94 @@
+name: P68 real Android Binder P67/P37 isolated emulator
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p68_android_binder/**'
+      - 'host_candidate/p43_original_service/**'
+      - 'host_candidate/p48_process_proxy/android/com/dsh/android/p48/P48HostProcessProbe.java'
+      - 'host_candidate/P68_REAL_ANDROID_BINDER_GATE.md'
+      - '.github/workflows/p68-real-android-p67.yml'
+permissions:
+  contents: read
+jobs:
+  real-android35-private-source:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p68-original-android-binder-p67-p37-integration-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p67-p53-p37-authenticated-process-handoff-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      P47_NO_HOST_FALLBACK: '1'
+      P49_NODE_STAGE: '0'
+      P51_SIDE_BY_SIDE: '1'
+      P51_X86_SIMULATOR_ONLY: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Scope and JVM fail-closed regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          test "$P47_NO_HOST_FALLBACK" = 1
+          test "$P51_SIDE_BY_SIDE" = 1
+          bash -n host_candidate/p43_original_service/build_embedded_emulator_apk.sh
+          bash -n host_candidate/p68_android_binder/run_x86_binder_handoff.sh
+          mkdir -p .p68_jvm
+          javac --release 8 -d .p68_jvm \
+            host_candidate/p37_remote_process/src/com/dsh/p37/P37RemoteProcess.java \
+            host_candidate/p53_child_start/src/com/dsh/android/p53/P53StartOrder.java \
+            host_candidate/p67_authenticated_handoff/src/com/dsh/android/p67/P67AuthenticatedHandoff.java \
+            host_candidate/p67_authenticated_handoff/test/com/dsh/android/p67/P67AuthenticatedHandoffTest.java
+          java -cp .p68_jvm com.dsh.android.p67.P67AuthenticatedHandoffTest > .p68_jvm.log
+          grep -Eq '^P67_AUTHENTICATED_P53_P37_JVM_TESTS=PASS assertions=[0-9]+$' .p68_jvm.log
+          grep -Fq 'p68.accept(message)' host_candidate/p48_process_proxy/android/com/dsh/android/p48/P48HostProcessProbe.java
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          sudo apt-get -qq update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -qq install -y apktool
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager";then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 | head -n1 || true)"
+          fi
+          test -n "$manager"
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+          echo 'P68_JVM_PRECONDITIONS=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Build exact original-derived side-by-side ephemeral APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash host_candidate/p43_original_service/build_embedded_emulator_apk.sh > .p68_build.log 2>&1 || {
+            grep -E 'P43_|P47_|P48_|P68_|error:|Traceback' .p68_build.log | tail -n 35 || true
+            exit 1
+          }
+          grep -Fq 'P51_SIGNED_APK_SEPARATE_PACKAGE_NO_PERMISSIONS=PASS' .p68_build.log
+          grep -Fq 'P47_REBUILT_ORIGINAL_PRIMARY_ENGINE_BRIDGE_NO_HOST_START=PASS' .p68_build.log
+          echo 'P68_ORIGINAL_DERIVED_CLASSES3_AND_EPHEMERAL_SIGN=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Enable emulator acceleration when available
+        run: if test -c /dev/kvm;then sudo chmod 666 /dev/kvm;fi
+      - name: Android35 P68 genuine Binder callback integration
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: bash host_candidate/p68_android_binder/run_x86_binder_handoff.sh
+      - name: Always delete source-derived APK and temporary test signer
+        if: always()
+        run: |
+          rm -rf .p43tmp .p68_build.log .p68_jvm .p68_jvm.log
+          echo 'P68_PRODUCTION_ENGINEMANAGER_NOT_WIRED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P68_OWNER_PHONE_NOT_CHANGED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P68_FIXED_SIGNED_V139=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

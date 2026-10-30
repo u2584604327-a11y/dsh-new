@@ -1,0 +1,63 @@
+name: DSH P63 exact signed v138 Kotlin collection args and return slice
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p63_kotlin_collection_slice/**'
+      - 'host_candidate/P63_EXACT_KOTLIN_LIST_SLICE.md'
+      - '.github/workflows/p63-original-kotlin-list-slice.yml'
+permissions:
+  contents: read
+jobs:
+  original-source-readonly:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p63-exact-kotlin-list-argument-return-slice-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p62-follow-original-generated-command-constructor-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Private repo and synthetic forward/branch/arity tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          python host_candidate/p63_kotlin_collection_slice/test_p63_kotlin_collection_slice.py > .p63_synthetic.log
+          grep -Eq '^P63_SYNTHETIC_KOTLIN_LIST_SLICE=PASS assertions=[0-9]+$' .p63_synthetic.log
+          grep -Fxq 'P63_SYNTHETIC_ORIGINAL_APK_READ=NO' .p63_synthetic.log
+          echo 'P63_SYNTHETIC_PUBLIC_API_DEFUSE_BARRIERS=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: P62 exact original v138 chain and Kotlin List slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p63_private
+          gh release download dsh-baseline-v135dsh-baseline-v135 \
+            --repo "$GH_REPO" --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --dir .p63_private
+          original=.p63_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+          printf '%s  %s\n' \
+            3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            "$original" | sha256sum -c - >/dev/null
+          python host_candidate/p63_kotlin_collection_slice/p63_kotlin_collection_slice.py "$original" > .p63_private/categorical.log
+          grep -Fxq 'P63_SIGNED_V138_P62_P61_P60_HASH_CHAIN=PASS' .p63_private/categorical.log
+          grep -Fxq 'P63_ORIGINAL_COMMAND_LITERAL_VALUES_AND_SOURCE_EMITTED=NO' .p63_private/categorical.log
+          grep -Fxq 'P63_FIXED_SIGNED_V139=BLOCKED' .p63_private/categorical.log
+          grep '^P63_EXACT_COLLECTION_SLICE=' .p63_private/categorical.log | tee -a "$GITHUB_STEP_SUMMARY"
+          echo 'P63_ORIGINAL_ENGINE_READY_EXIT_AND_RELEASE=NOT_PROVEN' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always purge private APK and intermediate reports
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p63_private .p63_synthetic.log
+          echo 'P63_FIXED_SIGNING_KEY_NOT_USED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P63_ORIGINAL_DSH_OR_DEVICE_UNCHANGED=YES' >> "$GITHUB_STEP_SUMMARY"

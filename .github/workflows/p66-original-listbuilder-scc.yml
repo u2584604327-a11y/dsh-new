@@ -1,0 +1,64 @@
+name: DSH P66 original v138 ListBuilder SCC and dominance
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p66_loop_scc_dominators/**'
+      - 'host_candidate/P66_ORIGINAL_CFG_LOOP_DOMINANCE.md'
+      - '.github/workflows/p66-original-listbuilder-scc.yml'
+permissions:
+  contents: read
+jobs:
+  signed-original-static-loop:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p66-original-command-loop-scc-dominators-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p65-exact-original-list-builder-cfg-alias-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Private exact source and SCC synthetic regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          python -m py_compile host_candidate/p66_loop_scc_dominators/*.py
+          python host_candidate/p66_loop_scc_dominators/test_p66_loop_scc_dominators.py > .p66_synthetic.log
+          grep -Eq '^P66_SYNTHETIC_SCC_DOMINATORS=PASS assertions=[0-9]+$' .p66_synthetic.log
+          grep -Fxq 'P66_SYNTHETIC_NO_ORIGINAL_APK_USED=YES' .p66_synthetic.log
+          echo 'P66_SYNTHETIC_SCC_BACKEDGE_DOMINANCE_GATES=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: SHA-locked original v138 SCC and dominator audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p66_private
+          gh release download dsh-baseline-v135dsh-baseline-v135 \
+            --repo "$GH_REPO" --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --dir .p66_private
+          original=.p66_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+          printf '%s  %s\n' \
+            3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            "$original" | sha256sum -c - >/dev/null
+          python host_candidate/p66_loop_scc_dominators/p66_loop_scc_dominators.py "$original" > .p66_private/categorical.log
+          grep -Fxq 'P66_ORIGINAL_V138_P65_TO_P35_HASH_CHAIN=PASS' .p66_private/categorical.log
+          grep -Fxq 'P66_RAW_ORIGINAL_METHODS_LITERALS_ARGV_AND_PATHS_LOGGED=NO' .p66_private/categorical.log
+          grep -Fxq 'P66_FIXED_SIGNED_V139_RELEASE=BLOCKED' .p66_private/categorical.log
+          grep '^P66_SCC_DOMINATOR_CATEGORICAL=' .p66_private/categorical.log | tee -a "$GITHUB_STEP_SUMMARY"
+          echo 'P66_P53_LIVE_ENGINE_READY_AND_ISOLATION=NOT_PROVEN' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always delete private APK and categorical files
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p66_private .p66_synthetic.log
+          echo 'P66_SIGNING_KEY_NEVER_ACCESSED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P66_INSTALLED_OWNER_DSH_UNCHANGED=YES' >> "$GITHUB_STEP_SUMMARY"

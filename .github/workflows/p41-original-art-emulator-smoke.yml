@@ -1,0 +1,79 @@
+name: DSH P41 original v138 ART emulator smoke - isolated transient
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p41_original_emulator/**'
+      - '.github/workflows/p41-original-art-emulator-smoke.yml'
+permissions:
+  contents: read
+concurrency:
+  group: p41-art-emulator-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  original-trampoline-fresh-android-35-art-smoke:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p41-original-art-emulator-rebuild-smoke-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p40-exact-engine-spawn-trampoline-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify private repo and install exact builder toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GH_REPO" --jq .visibility)" = private
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          python -m py_compile host_candidate/p40_exact_trampoline.py
+          sudo apt-get -qq update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -qq install -y apktool
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager"; then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 | head -n 1 || true)"
+          fi
+          test -n "$manager"
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Build exact original v138 and transient patched-art APK with separate signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash host_candidate/p41_original_emulator/build_disposable.sh
+          echo 'P41_SOURCE_AND_DEX_COMPILED=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+      - name: Enable emulator acceleration if available
+        shell: bash
+        run: if test -c /dev/kvm; then sudo chmod 666 /dev/kvm; fi
+      - name: Fresh Android 35 control versus patched ART startup, fail-closed network
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: bash host_candidate/p41_original_emulator/run_art_smoke.sh
+      - name: Always wipe APK, keys, logs, Android emulator state and source bytes
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p41tmp
+          echo 'P41_ORIGINAL_OR_PATCHED_APK_RELEASED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P41_FIXED_SIGNING_KEY_USED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P41_REAL_DSH_ENGINEMANAGER_ISOLATION=NOT_IMPLEMENTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P41_CHAT_BROWSER_ATTACHMENTS_PARITY=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P41_V139_RELEASE=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

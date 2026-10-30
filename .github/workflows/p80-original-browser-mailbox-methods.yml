@@ -1,0 +1,65 @@
+name: P80 original BrowserBridge command/result DEX method routes
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p80_native_original_mailbox/**'
+      - 'host_candidate/P80_ORIGINAL_BROWSER_MAILBOX_NATIVE_CALLSITE.md'
+      - '.github/workflows/p80-original-browser-mailbox-methods.yml'
+permissions:
+  contents: read
+jobs:
+  read-only-sha-locked-v138-p6-dex:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p80-original-native-mailbox-consumer-writer-dex-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p79-native-browser-mailbox-exact-ack-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Exact original v138 / P6 SHA and synthetic classifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          mkdir -p .p80_private
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          python host_candidate/p80_native_original_mailbox/audit_orig_dex_mailbox.py --selftest
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk --dir .p80_private
+          gh release download dsh-source-v139-p6 --repo "$GH_REPO" \
+            --pattern DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip \
+            --dir .p80_private
+          printf '%s  %s\n' 3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            .p80_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk | sha256sum -c - >/dev/null
+          printf '%s  %s\n' 3af586c2c83d1aea67d119357672559eb09371c77ef4e06900bb697c06d11fd5 \
+            .p80_private/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip | sha256sum -c - >/dev/null
+          echo 'P80_SOURCE_PROVENANCE_AND_TESTS=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: DEX exact command and result literal-using methods
+        shell: bash
+        run: |
+          set -euo pipefail
+          python host_candidate/p80_native_original_mailbox/audit_orig_dex_mailbox.py \
+            --original .p80_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --p6 .p80_private/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip \
+            > .p80_private/audit.log
+          grep -Fxq 'P80_PINNED_ORIGINAL_DEX_TARGETED_MAILBOX_METHOD_AUDIT=PASS' .p80_private/audit.log
+          grep -Fxq 'P80_ORIGINAL_BROWSER_TOOL_RESULT_MODEL_RESUME=NOT_PROVEN' .p80_private/audit.log
+          grep '^P80_CATEGORICAL_NATIVE_MAILBOX_EVIDENCE=' .p80_private/audit.log \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          echo 'P80_SOURCE_VALUES_AND_METHOD_NAMES_NOT_PRINTED=YES' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always destroy private original and report
+        if: always()
+        run: |
+          rm -rf .p80_private
+          echo 'P80_ORIGINAL_DEVICE_COOKIES_AND_SIGNER_UNTOUCHED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P80_ORIGINAL_NATIVE_TOOL_DISPATCH_AND_MODEL_RESULT=NOT_WIRED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P80_FIXED_SIGNED_V139=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

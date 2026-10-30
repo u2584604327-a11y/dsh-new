@@ -1,0 +1,94 @@
+name: DSH P20 isolated UID with host INTERNET real Android35 boundary proof
+on:
+  pull_request:
+    paths:
+      - 'host_candidate/p20_boundary/**'
+      - '.github/workflows/p20-isolated-boundary-probe.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: dsh-p20-os-probe-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  android35-host-network-vs-isolated-worker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Android 35 toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager"; then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 2>/dev/null | head -n1 || true)"
+          fi
+          test -n "$manager"
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+          echo "SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+      - name: Build isolated worker / host loopback control disposable app
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/classes out/dex
+          javac --release 8 -cp "$SDK_ROOT/platforms/android-35/android.jar" -d out/classes \
+            host_candidate/p20_boundary/android/com/dsh/p20/boundary/P20BoundaryActivity.java \
+            host_candidate/p20_boundary/android/com/dsh/p20/boundary/P20IsolatedWorker.java
+          jar cf out/p20.jar -C out/classes .
+          "$SDK_ROOT/build-tools/35.0.0/d8" --min-api 34 \
+            --lib "$SDK_ROOT/platforms/android-35/android.jar" \
+            --output out/dex out/p20.jar
+          "$SDK_ROOT/build-tools/35.0.0/aapt" package -f \
+            -M host_candidate/p20_boundary/android/AndroidManifest.xml \
+            -I "$SDK_ROOT/platforms/android-35/android.jar" \
+            -F out/p20-unsigned.apk
+          (cd out/dex && zip -q -j ../p20-unsigned.apk classes.dex)
+          "$SDK_ROOT/build-tools/35.0.0/zipalign" -f 4 \
+            out/p20-unsigned.apk out/p20-aligned.apk
+          LAB_PASSWORD="$(openssl rand -hex 16)"
+          keytool -genkeypair -alias disposable -keyalg RSA -keysize 3072 \
+            -validity 1 -storetype PKCS12 \
+            -dname 'CN=P20 EPHEMERAL TEST ONLY' \
+            -keystore out/p20-ci.p12 \
+            -storepass "$LAB_PASSWORD" -keypass "$LAB_PASSWORD" \
+            -noprompt >/dev/null 2>&1
+          "$SDK_ROOT/build-tools/35.0.0/apksigner" sign \
+            --ks out/p20-ci.p12 --ks-key-alias disposable \
+            --ks-pass "pass:$LAB_PASSWORD" --key-pass "pass:$LAB_PASSWORD" \
+            --out out/p20-disposable.apk out/p20-aligned.apk
+          "$SDK_ROOT/build-tools/35.0.0/apksigner" verify out/p20-disposable.apk
+          grep -Fq 'android:isolatedProcess="true"' host_candidate/p20_boundary/android/AndroidManifest.xml
+          grep -Fq 'android:exported="false"' host_candidate/p20_boundary/android/AndroidManifest.xml
+          grep -Fq 'android.permission.INTERNET' host_candidate/p20_boundary/android/AndroidManifest.xml
+          echo 'P20_DISPOSABLE_APP_BUILD=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Enable KVM
+        shell: bash
+        run: |
+          if test -c /dev/kvm; then sudo chmod 666 /dev/kvm; fi
+      - name: Real Android 35 host/isolated privilege separation
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: bash host_candidate/p20_boundary/android/run_boundary_probe.sh
+      - name: Destroy transient key, executable and test logs
+        if: always()
+        shell: bash
+        run: |
+          rm -f out/p20-ci.p12 out/p20-disposable.apk out/p20-unsigned.apk \
+            out/p20-aligned.apk out/p20-probe-log-local.txt
+          echo 'P20_PRIVATE_ORIGINAL_SIGNER=NEVER_USED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P20_ORIGINAL_ARM64_NODE_ACTUALLY_EXECUTED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P20_USER_PHONE_OR_PRODUCTION_CHANGED=NO' >> "$GITHUB_STEP_SUMMARY"

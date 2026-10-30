@@ -1,0 +1,71 @@
+name: DSH P18 legacy privileged shell/root tool failclose
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'host_candidate/patch_privileged_tools_p18.py'
+      - 'host_candidate/test_privileged_tools_p18.mjs'
+      - '.github/workflows/p18-privileged-tool-deny.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-privileged-escape-closed-scoped:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Fetch original exact private v138
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input out/tools/shell/lib out/tools/root/lib
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk --dir input
+          printf '%s  %s\n' 3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk | sha256sum -c -
+          python3 - <<'PY'
+          import zipfile,hashlib,pathlib
+          with zipfile.ZipFile('input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk') as z:
+            for entry,hashvalue in [
+              ('assets/shell-tool.zip','f34284d3518c1b5c5cd800b44db50b448bd844492a13e15d380b14b6448f2611'),
+              ('assets/root-tool.zip','d67301442216463dcf340d5c549b203d9c5ec3a7ebb07e8d25c54f1af24b95c1')]:
+              data=z.read(entry)
+              assert hashlib.sha256(data).hexdigest()==hashvalue
+              pathlib.Path('out/'+entry.rsplit('/',1)[-1]).write_bytes(data)
+          PY
+      - name: Patch only original shell/root plugin JS, keep package metadata and other entries
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 host_candidate/patch_privileged_tools_p18.py \
+            --shell out/shell-tool.zip --root out/root-tool.zip --out out/p18
+          python3 - <<'PY'
+          import zipfile,pathlib
+          for name,folder in [('shell','shell-tool.zip'),('root','root-tool.zip')]:
+            with zipfile.ZipFile('out/p18/'+folder) as z:
+              assert z.testzip() is None
+              pathlib.Path('out/tools/'+name+'/lib/index.js').write_bytes(z.read('lib/index.js'))
+              pathlib.Path('out/tools/'+name+'/package.json').write_bytes(z.read('package.json'))
+          PY
+          node --check out/tools/shell/lib/index.js
+          node --check out/tools/root/lib/index.js
+          node host_candidate/test_privileged_tools_p18.mjs out/tools
+          echo 'P18_PRIVILEGED_UID2000_SHELL_TOOL_REGISTERED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P18_PRIVILEGED_UID0_ROOT_TOOL_REGISTERED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P18_GENERIC_NODE_BASH_FS_NETWORK_CLOSED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P18_ORIGINAL_ANDROID_FUNCTIONALITY_REGRESSION=NOT_RUN' >> "$GITHUB_STEP_SUMMARY"
+      - name: Clean private binary inputs
+        if: always()
+        shell: bash
+        run: |
+          rm -f out/shell-tool.zip out/root-tool.zip out/p18/*zip
+          echo 'No sensitive artifacts, signing material or APK uploaded.' >> "$GITHUB_STEP_SUMMARY"

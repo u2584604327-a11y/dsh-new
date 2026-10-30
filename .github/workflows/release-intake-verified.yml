@@ -1,0 +1,198 @@
+name: DSH private uploaded inputs verification (no signing)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/release-intake-verified.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dsh-verified-intake-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apk-identity:
+    name: Signed APK identity - ${{ matrix.item }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - item: v135
+            tag: dsh-baseline-v135dsh-baseline-v135
+            asset: DSH0.4.1-v135-browser-native-device-v1.3.5-fixed-signature.1.apk
+            sha256: 394adfbe85b81ce46c285b1c531ffa307432d777e17af04fe5418272c5cc2e99
+            version: '135'
+          - item: v138
+            tag: dsh-baseline-v135dsh-baseline-v135
+            asset: DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+            sha256: 3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5
+            version: '138'
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      APK_TAG: ${{ matrix.tag }}
+      APK_FILE: ${{ matrix.asset }}
+      EXPECTED_SHA256: ${{ matrix.sha256 }}
+      EXPECTED_VERSION: ${{ matrix.version }}
+    steps:
+      - name: Download this exact private Release asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input
+          gh release download "$APK_TAG" --repo "$GH_REPO" --pattern "$APK_FILE" --dir input
+          test -s "input/$APK_FILE"
+      - name: Verify original APK hash and ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' "$EXPECTED_SHA256" "input/$APK_FILE" | sha256sum -c -
+          unzip -tqq "input/$APK_FILE"
+          echo "APK_ASSET_SHA256=PASS" >> "$GITHUB_STEP_SUMMARY"
+          echo "APK_ZIP_CRC=PASS" >> "$GITHUB_STEP_SUMMARY"
+      - name: Locate Android APK analysis tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="$(printenv ANDROID_HOME || printenv ANDROID_SDK_ROOT || echo /usr/local/lib/android/sdk)"
+          BUILD="$SDK/build-tools/35.0.0"
+          if ! test -x "$BUILD/apksigner" || ! test -x "$BUILD/aapt"; then
+            SDKMANAGER="$(command -v sdkmanager || true)"
+            if test -z "$SDKMANAGER"; then
+              SDKMANAGER="$(find "$SDK/cmdline-tools" -type f -name sdkmanager -perm /111 2>/dev/null | head -n1 || true)"
+            fi
+            test -n "$SDKMANAGER"
+            (yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses >/dev/null) || true
+            "$SDKMANAGER" --sdk_root="$SDK" "build-tools;35.0.0"
+          fi
+          test -x "$BUILD/apksigner"
+          test -x "$BUILD/aapt"
+          echo "SDK_BUILD=$BUILD" >> "$GITHUB_ENV"
+      - name: Inspect Android manifest and verify original signer
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkgline="$("$SDK_BUILD/aapt" dump badging "input/$APK_FILE" | grep '^package: ' | head -n1)"
+          printf '%s\n' "$pkgline"
+          [[ "$pkgline" == *"name='com.dsh.android'"* ]]
+          [[ "$pkgline" == *"versionCode='$EXPECTED_VERSION'"* ]]
+          "$SDK_BUILD/apksigner" verify --verbose --print-certs "input/$APK_FILE" > apk-identity.txt
+          grep -F 'Verified using v2 scheme (APK Signature Scheme v2): true' apk-identity.txt >/dev/null
+          count="$(grep -c '^Signer #[0-9]* certificate SHA-256 digest:' apk-identity.txt)"
+          test "$count" -eq 1
+          fingerprint="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' apk-identity.txt | tr 'A-F' 'a-f' | tr -d '[:space:]')"
+          test "$fingerprint" = "90072b7de43e96999be92d99869ce5e5b7639b5f2449417b99a1790831b60ff8"
+          echo "PACKAGE_NAME=PASS" >> "$GITHUB_STEP_SUMMARY"
+          echo "APK_VERSION_CODE=PASS" >> "$GITHUB_STEP_SUMMARY"
+          echo "APK_SIGNATURE_V2=PASS" >> "$GITHUB_STEP_SUMMARY"
+          echo "FIXED_CERT_SHA256=PASS" >> "$GITHUB_STEP_SUMMARY"
+          echo "HOST_INTEGRATION=NOT_VERIFIED" >> "$GITHUB_STEP_SUMMARY"
+          echo "APK_CREATED_BY_THIS_RUN=NO" >> "$GITHUB_STEP_SUMMARY"
+      - name: No APK or identity artifacts are published
+        if: always()
+        run: |
+          echo "Original APK is validated in the private runner only; no APK is reuploaded." >> "$GITHUB_STEP_SUMMARY"
+          echo "ART, privacy and phone validation: NOT_VERIFIED." >> "$GITHUB_STEP_SUMMARY"
+
+  p6-source:
+    name: P6 source and P5 JVM+D8 verification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      P6_TAG: dsh-source-v139-p6
+      P6_FILE: DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip
+      P6_SHA: 3af586c2c83d1aea67d119357672559eb09371c77ef4e06900bb697c06d11fd5
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Fetch and constrain P6 package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input work
+          gh release download "$P6_TAG" --repo "$GH_REPO" --pattern "$P6_FILE" --dir input
+          printf '%s  %s\n' "$P6_SHA" "input/$P6_FILE" | sha256sum -c -
+          python3 - <<'PY'
+          import pathlib, stat, zipfile
+          archive = pathlib.Path('input/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip')
+          with zipfile.ZipFile(archive) as z:
+              assert z.testzip() is None
+              total = 0
+              for entry in z.infolist():
+                  name = pathlib.PurePosixPath(entry.filename)
+                  if name.is_absolute() or '..' in name.parts or '\\' in entry.filename:
+                      raise SystemExit('ZIP unsafe path')
+                  if stat.S_ISLNK(entry.external_attr >> 16):
+                      raise SystemExit('ZIP symlink')
+                  total += entry.file_size
+                  if total > 20_000_000:
+                      raise SystemExit('ZIP expansion limit')
+              z.extractall('work')
+          print('P6_VERIFIED=PASS')
+          PY
+          echo "P6_SHA256_AND_ZIP=PASS" >> "$GITHUB_STEP_SUMMARY"
+      - name: Reproduce P6 Node/privacy and browser tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd work && bash REPRODUCE.sh)
+          echo "P6_NODE_AND_BROWSER=PASS" >> "$GITHUB_STEP_SUMMARY"
+      - name: Reproduce P5 synthetic JVM security suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work/p5
+          cd work/p5
+          unzip -q ../upstream/DSH_V139_P5_AUDIT_FAIL_CLOSED_SOURCE_ONLY.zip
+          bash REPRODUCE.sh
+          test -f out/classes/com/dsh/p1/ConsentLedger.class
+          echo "P5_SYNTHETIC_JVM=PASS" >> "$GITHUB_STEP_SUMMARY"
+      - name: Provision Android D8
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="$(printenv ANDROID_HOME || printenv ANDROID_SDK_ROOT || echo /usr/local/lib/android/sdk)"
+          BUILD="$SDK/build-tools/35.0.0"
+          if ! test -x "$BUILD/d8"; then
+            SDKMANAGER="$(command -v sdkmanager || true)"
+            if test -z "$SDKMANAGER"; then
+              SDKMANAGER="$(find "$SDK/cmdline-tools" -type f -name sdkmanager -perm /111 2>/dev/null | head -n1 || true)"
+            fi
+            test -n "$SDKMANAGER"
+            (yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses >/dev/null) || true
+            "$SDKMANAGER" --sdk_root="$SDK" "build-tools;35.0.0"
+          fi
+          test -x "$BUILD/d8"
+          echo "D8_EXE=$BUILD/d8" >> "$GITHUB_ENV"
+      - name: Transform P5 JVM core to DEX (not DSH host integration)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work/dex
+          jar cf work/p5-core.jar -C work/p5/out/classes .
+          "$D8_EXE" --min-api 26 --output work/dex work/p5-core.jar
+          test -s work/dex/classes.dex
+          echo "P5_JVM_CORE_D8=PASS" >> "$GITHUB_STEP_SUMMARY"
+          echo "HOST_INTEGRATED=NOT_VERIFIED" >> "$GITHUB_STEP_SUMMARY"
+          echo "NODE_EGRESS_CLOSED=NOT_VERIFIED" >> "$GITHUB_STEP_SUMMARY"
+          echo "APK_BUILT=NO" >> "$GITHUB_STEP_SUMMARY"
+          echo "ART_VERIFIED=NOT_VERIFIED" >> "$GITHUB_STEP_SUMMARY"
+          echo "DEVICE_ACCEPTED=NOT_VERIFIED" >> "$GITHUB_STEP_SUMMARY"
+      - name: Final boundary
+        if: always()
+        run: |
+          echo "No APK, user diagnostics, credentials or source payloads uploaded as workflow artifacts." >> "$GITHUB_STEP_SUMMARY"
+          echo "This workflow runs offline synthetic tests only, not a real APK build." >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,74 @@
+name: P91 original MainActivity bubble callback bounded callgraph
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p91_original_bubble_callback/**'
+      - 'host_candidate/P91_BUBBLE_ORIGINAL_CALLBACK_WIRING_GATE.md'
+      - '.github/workflows/p91-original-bubble-callgraph.yml'
+permissions:
+  contents: read
+jobs:
+  pinned-v138-bubble-callback-owner:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p91-original-bubble-callback-callgraph-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p90-failclosed-send-evidence-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Synthetic method descriptor parser and source safety check
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = 'u2584604327-a11y/dshe'
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          python -m py_compile host_candidate/p91_original_bubble_callback/p91_original_main_send_calls.py
+          python host_candidate/p91_original_bubble_callback/p91_original_main_send_calls.py --selftest
+          echo 'P91_STATIC_METHOD_INVOCATION_PARSER=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Read pinned original Dex once and trace narrow reverse call graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p91_temp
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt >/dev/null
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO" \
+            --pattern 'DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk' --dir .p91_temp
+          file='.p91_temp/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk'
+          printf '%s  %s\n' '3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5' "$file" | sha256sum -c - >/dev/null
+          python host_candidate/p91_original_bubble_callback/p91_original_main_send_calls.py \
+            --original "$file" > .p91_temp/callgraph.jsonl
+          grep -Fxq 'P91_ORIGINAL_BUBBLE_CLICK_AND_NEW_USER_TURN_WIRED=NO' .p91_temp/callgraph.jsonl
+          python - <<'PY'
+          import json,pathlib
+          data=pathlib.Path('.p91_temp/callgraph.jsonl').read_text().splitlines()
+          values=[x.partition('=')[2] for x in data if x.startswith('P91_EXACT_ORIGINAL_CALLGRAPH_CATEGORICAL=')]
+          if len(values)!=1: raise AssertionError('P91_MISSING_UNIQUE_CALLGRAPH')
+          d=json.loads(values[0])
+          if not d.get('pinned_original') or d.get('dex_count')!=2:
+              raise AssertionError('P91_SOURCE_INTEGRITY')
+          if d.get('original_target_log_method_count')!=2:
+              raise AssertionError('P91_BUBBLE_TWO_ORIGINAL_TARGETS_DRIFT')
+          print('P91_ORIGINAL_APP_METHODS='+str(d['app_method_count']))
+          print('P91_ORIGINAL_DIRECT_APP_EDGES='+str(d['direct_app_edges_found']))
+          print('P91_ORIGINAL_BUBBLE_LOG_PRODUCERS='+str(d['original_target_log_method_count']))
+          print('P91_ORIGINAL_BOUNDED_CALLER_CATEGORIES='+json.dumps(
+              d['targets'],sort_keys=True))
+          PY
+          echo 'P91_SHA_PINNED_ORIGINAL_CALLBACK_CALLGRAPH=PASS_AUDIT_ONLY' >> "$GITHUB_STEP_SUMMARY"
+      - name: Delete original and prove no production mutation
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p91_temp
+          echo 'P91_ORIGINAL_BUBBLE_CALLBACK_MITIGATION=NOT_PATCHED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P91_ORIGINAL_UI_AND_OMNIGATE_LIVE_INTEGRATION=NOT_VERIFIED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P91_SIGNED_RELEASE_OR_REAL_DEVICE_INSTALL=BLOCKED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P91_PRIVATE_SOURCE_OR_APK_ARTIFACTS_PUBLISHED=NO' >> "$GITHUB_STEP_SUMMARY"

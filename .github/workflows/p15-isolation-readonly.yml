@@ -1,0 +1,45 @@
+name: DSH P15 exact original APK strict isolation vs device profile audit
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'host_candidate/audit_v138_strict_isolation.py'
+      - '.github/workflows/p15-isolation-readonly.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  uid-and-device-reality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Read-only download exact original v138 (private Release)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input out
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk --dir input
+          printf '%s  %s\n' 3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk | sha256sum -c -
+      - name: Enumerate manifest services and Node/VM assets without claiming isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 host_candidate/audit_v138_strict_isolation.py \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --output out/p15-isolation-evidence-local-only.json
+          echo 'P15_STRUCTURAL_SERVICE_AUDIT=PASS_EXACT_APK' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P15_STRICT_VM_ISOLATION=NOT_VERIFIED_FAIL_CLOSED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P15_WEBVIEW_PROFILE_PRESETS=NOT_OS_UID_SANDBOX' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P15_NODE_GENERIC_FS_SHELL_NETWORK_GATE=NOT_VERIFIED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Protect original assets
+        if: always()
+        run: |
+          echo 'No private APK or user data uploaded; no manifest or code modified.' >> "$GITHUB_STEP_SUMMARY"

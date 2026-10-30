@@ -1,0 +1,73 @@
+name: P92 DSH-only OmniGate route preflight and single-send receipt gate
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p92_dsh_route/**'
+      - 'host_candidate/P92_DSH_ONLY_OMNIGATE_ROUTE_GATE.md'
+      - '.github/workflows/p92-dsh-only-route-gate.yml'
+permissions:
+  contents: read
+jobs:
+  dsh-only-single-request-contract:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p92-dsh-only-omnigate-route-and-receipt-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p91-original-bubble-callback-callgraph-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - name: Verify private workspace and run JVM one-shot route tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = 'u2584604327-a11y/dshe'
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          mkdir -p .p92temp/jvm
+          javac --release 8 -d .p92temp/jvm \
+            host_candidate/p90_send_evidence/src/com/dsh/android/p90/P90SendReceiptGate.java \
+            host_candidate/p92_dsh_route/src/com/dsh/android/p92/P92DshRouteGate.java \
+            host_candidate/p92_dsh_route/test/com/dsh/android/p92/P92DshRouteGateTest.java
+          java -cp .p92temp/jvm com.dsh.android.p92.P92DshRouteGateTest | tee .p92temp/jvm.log
+          for required in \
+              P92_DSH_EDITOR_FAIL_CLOSED_BEFORE_OMNIGATE=PASS \
+              P92_8787_VERIFIED_OWNER_PREFLIGHT_AND_409_FAIL_CLOSED=PASS \
+              P92_ONE_SHOT_NO_AUTO_RETRY_AND_HTTP200_NOT_DELIVERY=PASS \
+              P92_MAIN_AND_OVERLAY_OWNER_EXCLUSIVE=PASS; do
+            grep -Fxq "$required" .p92temp/jvm.log
+          done
+          echo 'P92_DSH_ONLY_ROUTE_PREFLIGHT_JVM=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Android health adapter compilation (not installed DSH)
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="$ANDROID_HOME"
+          jar="$(find "$SDK/platforms" -maxdepth 2 -name android.jar | sort -V | tail -n1)"
+          test -f "$jar"
+          javac --release 8 -cp "$jar" -d .p92temp/jvm \
+            host_candidate/p90_send_evidence/src/com/dsh/android/p90/P90SendReceiptGate.java \
+            host_candidate/p92_dsh_route/src/com/dsh/android/p92/P92DshRouteGate.java \
+            host_candidate/p92_dsh_route/android/com/dsh/android/p92/P92OmniGateHealthReader.java
+          grep -Fq 'con.setRequestMethod("GET")' \
+            host_candidate/p92_dsh_route/android/com/dsh/android/p92/P92OmniGateHealthReader.java
+          ! grep -Eq 'setRequestMethod\("POST"\)|getOutputStream\(' \
+            host_candidate/p92_dsh_route/android/com/dsh/android/p92/P92OmniGateHealthReader.java
+          echo 'P92_ANDROID_SDK_LOOPBACK_HEALTH_SOURCE_COMPILED=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Release limits and cleanup
+        if: always()
+        run: |
+          rm -rf .p92temp
+          {
+            echo 'P92_REAL_ORIGINAL_MAINACTIVITY_PRECHECK=NOT_WIRED'
+            echo 'P92_INSTALLED_DSH_TO_8787_POST=NOT_VERIFIED'
+            echo 'P92_UNALTERED_NATIVE_OWNER_409=RETAINED'
+            echo 'P92_OMNIGATE_DIRECT_INPUT_SYNC=OUT_OF_SCOPE_USER_CHOSE_DSH_ONLY'
+            echo 'P92_ORIGINAL_SIGNER_OR_DEPLOYMENT=BLOCKED'
+          } >> "$GITHUB_STEP_SUMMARY"

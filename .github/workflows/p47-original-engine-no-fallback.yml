@@ -1,0 +1,96 @@
+name: DSH P47 original EngineManager no-host-fallback dex bridge gate
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p47_no_fallback/**'
+      - 'host_candidate/p43_original_service/**'
+      - 'host_candidate/P47_ORIGINAL_ENGINE_NO_FALLBACK_GATE.md'
+      - '.github/workflows/p47-original-engine-no-fallback.yml'
+permissions:
+  contents: read
+concurrency:
+  group: p47-original-no-host-fallback-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  original-engine-bridge-denies-host-launch:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p47-original-engine-no-host-fallback-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p46-content-addressed-runtime-bundle-contract-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Fail-closed original Node bridge JVM canary and static Python validity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GH_REPO" --jq .visibility)" = private
+          mkdir -p .p47tests
+          python -m py_compile host_candidate/p47_no_fallback/p47_gate.py
+          javac --release 8 -d .p47tests \
+            host_candidate/p47_no_fallback/android/com/dsh/android/p47/P47LaunchGate.java \
+            host_candidate/p47_no_fallback/test/com/dsh/android/p47/P47LaunchGateTest.java
+          java -cp .p47tests com.dsh.android.p47.P47LaunchGateTest | tee .p47-jvm.txt
+          grep -Eq '^P47_JAVA_PROCESS_BUILDER_DENY_TESTS=PASS assertions=[0-9]+$' .p47-jvm.txt
+          grep -Fxq 'P47_NO_HOST_SPAWN_CANARY=PASS' .p47-jvm.txt
+          ! grep -E 'builder\.start\(|getRuntime\(\)\.exec\(|new ProcessBuilder\(' \
+             host_candidate/p47_no_fallback/android/com/dsh/android/p47/P47LaunchGate.java
+          echo 'P47_STATIC_JVM_NO_HOST_FALLBACK=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Restore immutable original DSH APK build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          sudo apt-get -qq update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -qq install -y apktool
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager"; then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 | head -n1 || true)"
+          fi
+          test -n "$manager"
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Rebuild original DSH with exact P40 to P47 gate only and verify real DEX
+        shell: bash
+        run: |
+          set -euo pipefail
+          P47_NO_HOST_FALLBACK=1 bash host_candidate/p43_original_service/build_embedded_emulator_apk.sh
+          echo 'P47_MAIN_DEX_ORIGINAL_NODE_HOST_LAUNCH_REMOVED=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P47_OTHER_ENGINE_PROCESSBUILDER_STARTS=UNCHANGED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Enable emulator hardware acceleration when available
+        shell: bash
+        run: if test -c /dev/kvm; then sudo chmod 666 /dev/kvm; fi
+      - name: Fresh Android35 actual original DSH main dex bridge fail closed
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: bash host_candidate/p47_no_fallback/run_original_emulator.sh
+      - name: Always discard temporary original APK, ephemeral key and tests
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p43tmp .p47tests .p47-jvm.txt
+          echo 'P47_ORIGINAL_V138_PHONE_APK_MODIFIED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P47_FIXED_SIGNING_KEY_USED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P47_TEST_APK_PUBLISHED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P47_NODE_PRODUCTION_ISOLATION=NOT_IMPLEMENTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P47_ORIGINAL_CHAT_BROWSER_FILES_PARITY=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P47_V139_RELEASE=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,49 @@
+name: DSH P67 authenticated P53-to-P37 Process facade JVM gate
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p67_authenticated_handoff/**'
+      - 'host_candidate/P67_AUTHENTICATED_PROCESS_HANDOFF.md'
+      - '.github/workflows/p67-authenticated-handoff.yml'
+permissions:
+  contents: read
+jobs:
+  no-original-script-process-handoff-jvm:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p67-p53-p37-authenticated-process-handoff-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p66-original-command-loop-scc-dominators-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Only compile pure-Java process contract and test
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p67_classes
+          javac --release 8 -d .p67_classes \
+            host_candidate/p37_remote_process/src/com/dsh/p37/P37RemoteProcess.java \
+            host_candidate/p53_child_start/src/com/dsh/android/p53/P53StartOrder.java \
+            host_candidate/p67_authenticated_handoff/src/com/dsh/android/p67/P67AuthenticatedHandoff.java \
+            host_candidate/p67_authenticated_handoff/test/com/dsh/android/p67/P67AuthenticatedHandoffTest.java
+          java -cp .p67_classes com.dsh.android.p67.P67AuthenticatedHandoffTest \
+            > .p67_test.log
+          grep -Eq '^P67_AUTHENTICATED_P53_P37_JVM_TESTS=PASS assertions=[0-9]+$' .p67_test.log
+          grep -Fxq 'P67_HELLO_IS_NOT_CHILD_STARTED_OR_READY=PASS' .p67_test.log
+          grep -Fxq 'P67_PROXY_ONLY_AFTER_AUTH_CHILD_STARTED=PASS' .p67_test.log
+          grep -Fxq 'P67_ORIGINAL_ENGINE_READY=NOT_IMPLEMENTED' .p67_test.log
+          grep -Fxq 'P67_ORIGINAL_ANDROID_BINDER_INTEGRATION=NOT_IMPLEMENTED' .p67_test.log
+          grep -Fxq 'P67_SIGNED_PRODUCTION_APK=BLOCKED' .p67_test.log
+          echo 'P67_P53_TO_P37_JVM_CONTRACT=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P67_REAL_NODE_ISOLATION_AND_READY=NOT_PROVEN' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P67_FIXED_SIGNED_V139_APK=BLOCKED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always clean intermediate classes and log
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p67_classes .p67_test.log
+          echo 'P67_ORIGINAL_BINARY_AND_SIGNING_KEY_NOT_ACCESSED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P67_ORIGINAL_DSH_DEVICE_NOT_CHANGED=YES' >> "$GITHUB_STEP_SUMMARY"

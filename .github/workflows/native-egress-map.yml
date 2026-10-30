@@ -1,0 +1,72 @@
+name: DSH real APK native diagnostic call graph (read only)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'host_candidate/audit_native_upload_callgraph.py'
+      - '.github/workflows/native-egress-map.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dex-callers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Download exact v138 in private runner only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input out
+          gh release download dsh-baseline-v135dsh-baseline-v135 \
+            --repo "$GH_REPO" \
+            --pattern 'DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk' --dir input
+          printf '%s  %s\n' \
+            3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk | sha256sum -c -
+      - name: Install pinned read-only DEX decoder
+        run: python -m pip install -r host_candidate/requirements.txt
+      - name: Scan all DSH code methods and direct diagnostic upload callers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python host_candidate/audit_native_upload_callgraph.py \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --report out/native-upload-callgraph.json
+      - name: Print bounded call edges for independent review
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, os
+          r=json.loads(pathlib.Path("out/native-upload-callgraph.json").read_text())
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
+              f.write("## Exact v138 native egress call graph\n")
+              f.write(f"- Application code methods examined: {r['app_methods_scanned']}\n")
+              f.write(f"- Direct application invoke pairs: {r['direct_app_invocation_pairs']}\n")
+              f.write(f"- Application network invocation sites: {r['network_invocations_among_app_classes']}\n")
+              for row in r['log_uploader_methods']:
+                  name=row['method'].split('->',1)[-1]
+                  f.write(f"- LogUploader `{name}`: {row['direct_caller_count']} direct call sites; callers: ")
+                  f.write(', '.join('`'+s.split('->',1)[-1].split('(')[0]+'`' for s in row['direct_callers'][:8]))
+                  f.write("\n")
+              f.write("\n**Not verified:** dynamic/reflection/JNI and Node network egress; no APK modification or signing.\n")
+          print("NATIVE_DEX_CALLGRAPH=CREATED")
+          print("FULL_NETWORK_EGRESS_CLOSED=NOT_VERIFIED")
+          PY
+      - name: No APK or diagnostic payload is exported
+        if: always()
+        shell: bash
+        run: |
+          echo 'Read-only DEX call graph; no original APK, sensitive logs, signing keys, or binary artifacts were uploaded.' >> "$GITHUB_STEP_SUMMARY"

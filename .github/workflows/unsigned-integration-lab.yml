@@ -1,0 +1,219 @@
+name: DSH P13 AndroidX Startup automatic native LogViewer hook emulator gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'host_candidate/assemble_unsigned_lab.py'
+      - 'host_candidate/p13_manifest_inject.py'
+      - 'host_candidate/p13_compile_stub/**'
+      - 'host_candidate/run_emulator_smoke.sh'
+      - 'host_candidate/build_instrumentation_lab.sh'
+      - 'host_candidate/test-only/**'
+      - 'host_candidate/p12_native/**'
+      - '.github/workflows/unsigned-integration-lab.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: dsh-p13-auto-init-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ephemeral-unsigned-assembly:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Preflight emulator script syntax before downloading APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n host_candidate/run_emulator_smoke.sh
+          bash -n host_candidate/build_instrumentation_lab.sh
+          python3 -m py_compile host_candidate/assemble_unsigned_lab.py host_candidate/p13_manifest_inject.py
+          echo 'EMULATOR_SCRIPT_SYNTAX=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Fetch both SHA-pinned inputs from PRIVATE Releases only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input out out/native-classes out/native-dex
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk --dir input
+          gh release download dsh-source-v139-p6 --repo "$GH_REPO" \
+            --pattern DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip --dir input
+          printf '%s  %s\n' '3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5' \
+            'input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk' | sha256sum -c -
+          printf '%s  %s\n' '3af586c2c83d1aea67d119357672559eb09371c77ef4e06900bb697c06d11fd5' \
+            'input/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip' | sha256sum -c -
+      - name: Install real Android platform and DEX tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -r host_candidate/requirements.txt
+          SDK="$(printenv ANDROID_HOME || printenv ANDROID_SDK_ROOT || echo /usr/local/lib/android/sdk)"
+          SDKMANAGER="$(command -v sdkmanager || true)"
+          if test -z "$SDKMANAGER"; then
+            SDKMANAGER="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 2>/dev/null | head -n1 || true)"
+          fi
+          test -n "$SDKMANAGER"
+          (yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses >/dev/null) || true
+          "$SDKMANAGER" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+          test -s "$SDK/platforms/android-35/android.jar"
+          test -x "$SDK/build-tools/35.0.0/d8"
+          test -x "$SDK/build-tools/35.0.0/apksigner"
+          test -x "$SDK/build-tools/35.0.0/aapt"
+          test -x "$SDK/build-tools/35.0.0/zipalign"
+          echo "SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+      - name: Compile P5 P12 P13 classes with non-packaged Startup interface stub
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import io, pathlib, zipfile
+          p=zipfile.ZipFile('input/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip')
+          addon=p.read('upstream/DSH_V139_P5_AUDIT_FAIL_CLOSED_SOURCE_ONLY.zip')
+          with zipfile.ZipFile(io.BytesIO(addon)) as z:
+              files=sorted(n for n in z.namelist()
+                           if n.startswith('merged_source/src/') and n.endswith('.java'))
+              if len(files)!=9:raise ValueError('P5_SOURCE_COUNT_MISMATCH')
+              for n in files:
+                  path=pathlib.PurePosixPath(n)
+                  if '..' in path.parts:raise ValueError('PATH_TRAVERSAL')
+                  output=pathlib.Path('out/native-src')/path.relative_to('merged_source/src')
+                  output.parent.mkdir(parents=True,exist_ok=True)
+                  output.write_bytes(z.read(n))
+          PY
+          mkdir -p out/native-src/com/dsh/p12
+          cp host_candidate/p12_native/com/dsh/p12/P12LogViewerReviewEntry.java \
+            out/native-src/com/dsh/p12/P12LogViewerReviewEntry.java
+          cp host_candidate/p12_native/com/dsh/p12/P13NativeReviewInitializer.java \
+            out/native-src/com/dsh/p12/P13NativeReviewInitializer.java
+          mkdir -p out/p13-stub-classes
+          javac --release 8 -cp "$SDK_ROOT/platforms/android-35/android.jar" \
+            -d out/p13-stub-classes host_candidate/p13_compile_stub/androidx/startup/Initializer.java
+          jar cf out/p13-compile-only-stub.jar -C out/p13-stub-classes .
+          mapfile -d '' sources < <(find out/native-src -name '*.java' -print0 | sort -z)
+          test "${#sources[@]}" -eq 11
+          javac --release 8 -cp "$SDK_ROOT/platforms/android-35/android.jar:out/p13-compile-only-stub.jar" \
+            -d out/native-classes "${sources[@]}"
+          test ! -d out/native-classes/androidx
+          jar cf out/p5-native.jar -C out/native-classes .
+          "$SDK_ROOT/build-tools/35.0.0/d8" --min-api 26 \
+            --lib "$SDK_ROOT/platforms/android-35/android.jar" \
+            --classpath out/p13-compile-only-stub.jar \
+            --output out/native-dex out/p5-native.jar
+          test -s out/native-dex/classes.dex
+          echo 'P5_P12_P13_ANDROID_NATIVE_JAVAC_D8=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P13_STARTUP_STUB_PACKAGED_IN_DEX=NO' >> "$GITHUB_STEP_SUMMARY"
+      - name: Build test-only same-certificate instrumentation skeleton
+        shell: bash
+        run: bash host_candidate/build_instrumentation_lab.sh
+      - name: Fuse bounded host DEX + native P5 DEX + P6 assets, no signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          python host_candidate/assemble_unsigned_lab.py \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            input/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip \
+            out/native-dex/classes.dex \
+            --output out/UNSIGNED_LAB_ONLY_DO_NOT_INSTALL.apk \
+            --report out/fusion-report.json
+          "$SDK_ROOT/build-tools/35.0.0/zipalign" -f 4 \
+            out/UNSIGNED_LAB_ONLY_DO_NOT_INSTALL.apk out/ALIGNED_UNSIGNED_LAB_DO_NOT_INSTALL.apk
+          "$SDK_ROOT/build-tools/35.0.0/zipalign" -c 4 out/ALIGNED_UNSIGNED_LAB_DO_NOT_INSTALL.apk
+          unzip -tqq out/ALIGNED_UNSIGNED_LAB_DO_NOT_INSTALL.apk
+          badging="$("$SDK_ROOT/build-tools/35.0.0/aapt" dump badging out/ALIGNED_UNSIGNED_LAB_DO_NOT_INSTALL.apk)"
+          pkgline="$(printf '%s\n' "$badging" | grep '^package: ' | head -n1)"
+          [[ "$pkgline" == *"name='com.dsh.android'"* ]]
+          [[ "$pkgline" == *"versionCode='138'"* ]]
+          test "$(unzip -Z1 out/ALIGNED_UNSIGNED_LAB_DO_NOT_INSTALL.apk | grep -Ec '^classes(2|3)?\.dex$')" -eq 3
+          if "$SDK_ROOT/build-tools/35.0.0/apksigner" verify out/ALIGNED_UNSIGNED_LAB_DO_NOT_INSTALL.apk >/dev/null 2>&1; then
+            echo 'Unexpected valid APK signing detected: fail closed.'
+            exit 1
+          fi
+          echo 'UNSIGNED_APK_STRUCTURAL_ASSEMBLY=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P13_MANIFEST_AUTOHOOK_METADATA=PINNED_SHA_ONLY' >> "$GITHUB_STEP_SUMMARY"
+          echo 'UNSIGNED_APK_ZIPALIGN_AND_AAPT=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'ORIGINAL_APK_SIGNATURE_INTENTIONALLY_INVALIDATED=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'VERSION_CODE=138_UNCHANGED' >> "$GITHUB_STEP_SUMMARY"
+          python - <<'PY'
+          import json,os,pathlib
+          r=json.loads(pathlib.Path('out/fusion-report.json').read_text())
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as out:
+              out.write('Added P5 DEX classes: '+str(r['P5_CLASS_COUNT'])+'\n')
+              out.write('Unmodified APK entries byte-checked: '+str(r['UNCHANGED_ENTRIES_CHECKED'])+'\n')
+              out.write('P2 primary DEX SHA256: '+r['PATCHED_MAIN_DEX_SHA256']+'\n')
+              out.write('Ephemeral unsigned aligned lab APK exists only inside this runner, never published.\n')
+          PY
+      - name: Create one-time SELF-SIGNED lab identity (never original DSH certificate)
+        shell: bash
+        run: |
+          set -euo pipefail
+          LAB_PASS="$(openssl rand -hex 20)"
+          keytool -genkeypair -alias dsh-ephemeral-ci -keyalg RSA -keysize 3072 \
+            -validity 1 -storetype PKCS12 -dname 'CN=DISPOSABLE_EMULATOR_TEST_ONLY' \
+            -keystore out/EMULATOR_ONLY_EPHEMERAL.p12 \
+            -storepass "$LAB_PASS" -keypass "$LAB_PASS" -noprompt >/dev/null 2>&1
+          "$SDK_ROOT/build-tools/35.0.0/apksigner" sign \
+            --ks out/EMULATOR_ONLY_EPHEMERAL.p12 --ks-key-alias dsh-ephemeral-ci \
+            --ks-pass "pass:$LAB_PASS" --key-pass "pass:$LAB_PASS" \
+            --out out/EMULATOR_DEBUG_ONLY_DO_NOT_DISTRIBUTE.apk \
+            out/ALIGNED_UNSIGNED_LAB_DO_NOT_INSTALL.apk
+          "$SDK_ROOT/build-tools/35.0.0/apksigner" verify --verbose --print-certs \
+            out/EMULATOR_DEBUG_ONLY_DO_NOT_DISTRIBUTE.apk > out/ephemeral-cert.txt
+          "$SDK_ROOT/build-tools/35.0.0/apksigner" sign \
+            --ks out/EMULATOR_ONLY_EPHEMERAL.p12 --ks-key-alias dsh-ephemeral-ci \
+            --ks-pass "pass:$LAB_PASS" --key-pass "pass:$LAB_PASS" \
+            --out out/P5_INSTRUMENTATION_EPHEMERAL_SAME_SIGNER.apk \
+            out/P5_INSTRUMENTATION_ALIGNED_DO_NOT_SHARE.apk
+          "$SDK_ROOT/build-tools/35.0.0/apksigner" verify --verbose \
+            out/P5_INSTRUMENTATION_EPHEMERAL_SAME_SIGNER.apk >/dev/null
+          lab_cert="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' out/ephemeral-cert.txt | head -n 1)"
+          test -n "$lab_cert"
+          test "$lab_cert" != '90072b7de43e96999be92d99869ce5e5b7639b5f2449417b99a1790831b60ff8'
+          echo 'EMULATOR_ONLY_EPHEMERAL_SIGNATURE=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'NOT_COMPATIBLE_WITH_INSTALLED_DSH_V138=EXPECTED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Prepare emulator KVM access
+        shell: bash
+        run: |
+          if test -c /dev/kvm; then sudo chmod 666 /dev/kvm; fi
+      - name: Install and launch disposable candidate on fresh offline Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: bash host_candidate/run_emulator_smoke.sh out/EMULATOR_DEBUG_ONLY_DO_NOT_DISTRIBUTE.apk out/P5_INSTRUMENTATION_EPHEMERAL_SAME_SIGNER.apk
+      - name: Destroy transient APK and state remaining blockers
+        if: always()
+        shell: bash
+        run: |
+          rm -f out/UNSIGNED_LAB_ONLY_DO_NOT_INSTALL.apk out/ALIGNED_UNSIGNED_LAB_DO_NOT_INSTALL.apk out/EMULATOR_DEBUG_ONLY_DO_NOT_DISTRIBUTE.apk out/EMULATOR_ONLY_EPHEMERAL.p12 out/P5_INSTRUMENTATION_EPHEMERAL_SAME_SIGNER.apk out/P5_INSTRUMENTATION_ALIGNED_DO_NOT_SHARE.apk out/P5_INSTRUMENTATION_UNSIGNED_DO_NOT_SHARE.apk /tmp/dsh-private-emulator-logcat.txt
+          {
+            echo 'PRODUCTION_V139_APK_BUILT=NO'
+            echo 'FIXED_CERTIFICATE_SIGNING=NOT_PERFORMED'
+            echo 'P12_TEST_ONLY_UI_HOOK=CHECK_INSTRUMENTATION_STEP'
+            echo 'P13_ANDROIDX_STARTUP_NATIVE_AUTOHOOK=SEE_REAL_INSTRUMENTATION_GATE'
+            echo 'P13_PRODUCT_RUNTIME_AUTOHOOK=NOT_ASSUMED_FROM_STATIC_TESTS'
+            echo 'P5_SEND_GATE_CONNECTED_TO_LEGACY_NATIVE_NODE=NO'
+            echo 'ART_EMULATOR_RESULT=SEE_DISPOSABLE_EMULATOR_JOB_STEP'\n            echo 'ART_ON_REAL_PHONE=NOT_VERIFIED'
+            echo 'No generated APK or binary artifact uploaded or released.'
+          } >> "$GITHUB_STEP_SUMMARY"

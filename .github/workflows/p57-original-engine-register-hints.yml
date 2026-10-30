@@ -1,0 +1,72 @@
+name: DSH P57 exact original EngineManager JS/READY register hints
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p57_engine_local_dataflow/**'
+      - 'host_candidate/P57_ORIGINAL_ENGINE_LITERAL_FLOW_GATE.md'
+      - '.github/workflows/p57-original-engine-register-hints.yml'
+permissions:
+  contents: read
+concurrency:
+  group: p57-private-dex-local-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  p57-exact-original-static-only:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p57-engine-literal-register-ready-trace-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p56-exact-engine-entry-and-ready-slice-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Exact private scope and deterministic synthetic regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          python -m py_compile host_candidate/p57_engine_local_dataflow/*.py
+          python host_candidate/p57_engine_local_dataflow/test_p57_local_dataflow.py > .p57_synthetic.log
+          grep -Eq '^P57_LOCAL_REGISTER_SYNTHETIC_TESTS=PASS assertions=[0-9]+$' .p57_synthetic.log
+          grep -Fxq 'P57_SYNTHETIC_ONLY_AND_ORIGINAL_STRINGS_EXCLUDED=YES' .p57_synthetic.log
+          echo 'P57_SYNTHETIC_OVERWRITE_BRANCH_FAIL_CLOSED=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: P56 anchored actual original v138 entry and READY local-register audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p57_private
+          gh release download dsh-baseline-v135dsh-baseline-v135 \
+            --repo "$GH_REPO" --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --dir .p57_private
+          original=.p57_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+          printf '%s  %s\n' \
+            3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            "$original" | sha256sum -c - >/dev/null
+          python host_candidate/p57_engine_local_dataflow/p57_engine_local_dataflow.py "$original" > .p57_private/aggregate_only.log
+          grep -Fxq 'P57_P56_EXACT_SIGNED_V138_AND_FULL_TAR_HASH=PASS' .p57_private/aggregate_only.log
+          grep -Fxq 'P57_PRIMARY_ENGINE_SPAWN_OFFSET=PASS' .p57_private/aggregate_only.log
+          grep -Fxq 'P57_ORIGINAL_JS_PATH_AND_READY_LITERAL_CONTENTS_PRINTED=NO' .p57_private/aggregate_only.log
+          grep -Fxq 'P57_EXECUTABLE_PRODUCTION_SCRIPT_RESOLVED=NO' .p57_private/aggregate_only.log
+          grep -Fxq 'P57_RUNTIME_READY_CONDITION_PROVED=NO' .p57_private/aggregate_only.log
+          grep -Fxq 'P57_PRODUCTION_SCRIPTS_EXECUTED=NO' .p57_private/aggregate_only.log
+          grep -Fxq 'P57_FIXED_SIGNED_V139=BLOCKED' .p57_private/aggregate_only.log
+          grep -E '^P57_(START_FAMILY_METHODS|BOUNDED_LOCAL_REGISTER_COUNTERS|WITHIN_METHOD_PC_PROXIMITY_COUNTERS)=' .p57_private/aggregate_only.log | tee -a "$GITHUB_STEP_SUMMARY"
+          echo 'P57_LITERAL_TO_ACTUAL_ARGV_OR_READY=NOT_PROVEN' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P57_FINAL_V139_APK=BLOCKED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always destroy private APK and source-derived temporary metadata
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p57_private .p57_synthetic.log
+          echo 'P57_ORIGINAL_APK_OR_JS_RELEASED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P57_OWNER_DEVICE_OR_APP_CHANGED=NO' >> "$GITHUB_STEP_SUMMARY"

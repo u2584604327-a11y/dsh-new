@@ -1,0 +1,76 @@
+name: DSH P7 diagnostic bundle path exposure gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'host_candidate/patch_logs_export_output.py'
+      - 'host_candidate/test_logs_export.mjs'
+      - '.github/workflows/p7-logs-path-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  model-output-boundary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Download real v138 APK from private Release, check exact SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input out/plugin/lib
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk --dir input
+          printf '%s  %s\n' 3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk | sha256sum -c -
+      - name: Extract precise logs tool nested ZIP and prove original identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,zipfile,pathlib
+          apk='input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk'
+          with zipfile.ZipFile(apk) as z:
+            if z.testzip():raise SystemExit('APK_BAD_CRC')
+            original=z.read('assets/logs-tool.zip')
+          h=hashlib.sha256(original).hexdigest()
+          if h!='3e6f281da126b2483d812c11297dd27d41787c29bbe3583221697749c39ff01a':
+            raise SystemExit('V138_LOG_TOOL_PREIMAGE_MISMATCH')
+          pathlib.Path('out/original-logs-tool.zip').write_bytes(original)
+          print('NATIVE_NODE_LOG_TOOL_PREIMAGE=PASS')
+          PY
+      - name: Apply P7 path-redaction patch to temp ZIP and run Node fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          python host_candidate/patch_logs_export_output.py out/original-logs-tool.zip \
+            --output out/p7-logs-tool.zip --extract-js out/plugin/lib/index.js
+          python - <<'PY'
+          import zipfile,pathlib
+          with zipfile.ZipFile('out/p7-logs-tool.zip') as p:
+            if p.testzip():raise SystemExit('P7_ZIP_CRC_FAILED')
+            pathlib.Path('out/plugin/package.json').write_bytes(p.read('package.json'))
+          PY
+          node --check out/plugin/lib/index.js
+          node host_candidate/test_logs_export.mjs out/plugin/lib/index.js
+          echo 'P7_LOGS_TOOL_MODEL_OUTPUT_PATH_NOT_EXPOSED=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P7_ORIGINAL_SUMMARY_BEHAVIOR=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: State remaining egress risks
+        if: always()
+        run: |
+          echo 'Node still shares app UID/filesystem; private logs-result mailbox can contain path.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Ordinary file attachments and other Node transport methods are outside this test.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P7_MODIFIED_APK_BUILT=NO; V139_SIGNED_APK=NO; ART=NOT_VERIFIED.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No APK or diagnostic bundle uploaded to workflow artifacts.' >> "$GITHUB_STEP_SUMMARY"

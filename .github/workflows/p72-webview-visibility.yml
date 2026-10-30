@@ -1,0 +1,93 @@
+name: P72 original browser WebView accessor visibility audit
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p72_webview_access/**'
+      - 'host_candidate/p43_original_service/build_embedded_emulator_apk.sh'
+      - 'host_candidate/p43_original_service/android/com/dsh/android/p43/P43ProbeActivity.java'
+      - 'host_candidate/P72_BROWSERBRIDGE_ACCESS_ROOTCAUSE.md'
+      - '.github/workflows/p72-webview-visibility.yml'
+permissions:
+  contents: read
+jobs:
+  signed-original-browser-access:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p72-browserbridge-webview-access-rootcause-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p71-browser-reply-once-webview-session-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Private exact original and synthetic access classifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          python host_candidate/p72_webview_access/test_access_flags.py
+          mkdir -p .p72_private
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk --dir .p72_private
+          original=.p72_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+          printf '%s  %s\n' 3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 "$original" | sha256sum -c - >/dev/null
+          python host_candidate/p72_webview_access/audit_original_webview_access.py "$original" \
+            > .p72_private/access.log
+          grep -Fxq 'P72_SIGNED_V138_BROWSERBRIDGE_ACCESS_AUDIT=PASS' .p72_private/access.log
+          grep '^P72_WEBVIEW_METHOD_FLAGS_AND_CALLS=' .p72_private/access.log | tee -a "$GITHUB_STEP_SUMMARY"
+          echo 'P72_ONLY_STATIC_ACCESS_PROOF=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P72_INSTALLED_NATIVE_BRIDGE_NOT_PATCHED=YES' >> "$GITHUB_STEP_SUMMARY"
+      - name: Prepare Android35 test compiler without production signing key
+        shell: bash
+        env:
+          P47_NO_HOST_FALLBACK: '1'
+          P49_NODE_STAGE: '0'
+          P51_SIDE_BY_SIDE: '1'
+          P51_X86_SIMULATOR_ONLY: '1'
+          P72_ACCESSOR_FIXTURE_ONLY: '1'
+        run: |
+          set -euo pipefail
+          bash -n host_candidate/p43_original_service/build_embedded_emulator_apk.sh
+          python host_candidate/p72_webview_access/test_exact_patch.py
+          sudo apt-get -qq update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -qq install -y apktool
+          SDK="$ANDROID_HOME"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager";then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 | head -n1 || true)"
+          fi
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+          bash host_candidate/p43_original_service/build_embedded_emulator_apk.sh > .p72_build.log 2>&1 || {
+            grep -E 'P72_|P47_|P51_|error:|Traceback' .p72_build.log | tail -n 50 || true
+            exit 1
+          }
+          grep -Fxq 'P72_REBUILT_MAIN_DEX_CURRENT_WEBVIEW_IS_PUBLIC=PASS' .p72_build.log
+          grep -Fxq 'P47_REBUILT_ORIGINAL_PRIMARY_ENGINE_BRIDGE_NO_HOST_START=PASS' .p72_build.log
+          grep -Fxq 'P51_SIGNED_APK_SEPARATE_PACKAGE_NO_PERMISSIONS=PASS' .p72_build.log
+          echo 'P72_EXACT_PRIVATE_TO_PUBLIC_ONLY_IN_DISPOSABLE_APK=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Enable KVM when available
+        run: if test -c /dev/kvm;then sudo chmod 666 /dev/kvm;fi
+      - name: Android35 real ART access check in derived sidecar package
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: bash host_candidate/p72_webview_access/run_emulator_accessor.sh
+      - name: Always remove original DEX and private reports
+        if: always()
+        run: |
+          rm -rf .p72_private .p43tmp .p72_build.log
+          echo 'P72_FIXED_SIGNER_NOT_USED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P72_USER_LOGIN_DATA_UNCHANGED=YES' >> "$GITHUB_STEP_SUMMARY"
