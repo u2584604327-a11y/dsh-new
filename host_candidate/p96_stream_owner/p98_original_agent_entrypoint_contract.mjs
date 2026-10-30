@@ -24,14 +24,24 @@ function info(klass,method){
   const body=Function.prototype.toString.call(fn);
   const declared=body.match(/^[^(]*\(([^)]{0,450})\)/)?.[1]??'';
   const params=declared.split(',').map(x=>x.trim()).filter(safe).slice(0,12);
-  const propertyNames=[...body.matchAll(/(?:this|args|options|input|params|session|turn)\.([A-Za-z_$][A-Za-z0-9_$]{0,70})/g)]
+  const propertyNames=[...body.matchAll(/(?:this|args|options|input|params|session|turn|request|signal)\??\.([A-Za-z_$][A-Za-z0-9_$]{0,70})/g)]
+    .map(x=>x[1]).filter(safe);
+  const requestFields=[...body.matchAll(/request\??\.([A-Za-z_$][A-Za-z0-9_$]{0,70})/g)]
     .map(x=>x[1]).filter(safe);
   const calls=[...body.matchAll(/(?:this\.)?([A-Za-z_$][A-Za-z0-9_$]{0,70})\s*\(/g)]
     .map(x=>x[1]).filter(x=>safe(x)&&!['if','for','while','switch','catch'].includes(x));
+  const memberCalls=[...body.matchAll(/([A-Za-z_$][A-Za-z0-9_$]{0,70}(?:\??\.[A-Za-z_$][A-Za-z0-9_$]{0,70}){1,4})\s*\(/g)]
+    .map(x=>x[1].replaceAll('?.','.'))
+    .filter(x=>x.split('.').every(safe));
+  const safeLiterals=[...body.matchAll(/["']([A-Za-z0-9_.:/-]{1,90})["']/g)]
+    .map(x=>x[1]).filter(x=>!/^(?:http|https):/i.test(x));
   return {
     method,arity:fn.length,params,
     propertyNames:[...new Set(propertyNames)].slice(0,40),
+    requestFields:[...new Set(requestFields)].slice(0,40),
     calledIdentifiers:[...new Set(calls)].slice(0,45),
+    memberCalls:[...new Set(memberCalls)].slice(0,45),
+    safeLiterals:[...new Set(safeLiterals)].slice(0,45),
     isAsync:fn.constructor?.name==='AsyncFunction',
     sourceSize:body.length
   };
