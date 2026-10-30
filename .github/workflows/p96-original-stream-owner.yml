@@ -13,14 +13,16 @@ permissions:
 jobs:
   one-source-locked-owner-check:
     if: >-
+      github.repository == 'u2584604327-a11y/dsh-new' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.ref == 'dsh/p96-original-engine-stream-owner-narrow-20261030' &&
-      github.event.pull_request.base.ref == 'dsh/p95-stream-to-message-tool-boundary-20261030'
+      github.event.pull_request.head.ref == 'migration/dshe-p98-20261031' &&
+      github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-24.04
     timeout-minutes: 28
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
+      BASELINE_REPO: u2584604327-a11y/dshe
     steps:
       - uses: actions/checkout@v4
         with: {persist-credentials: false}
@@ -75,7 +77,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .p14verify/input .p14verify/out
-          gh release download dsh-source-v139-p6 --repo "$GH_REPO" \
+          gh release download dsh-source-v139-p6 --repo "$BASELINE_REPO" \
             --pattern DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip \
             --dir .p14verify/input
           printf '%s  %s\n' \
@@ -105,12 +107,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$GH_REPO" = "u2584604327-a11y/dshe"
-          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          test "$GH_REPO" = "u2584604327-a11y/dsh-new"
+          test "$BASELINE_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .visibility)" = "public"
+          test "$(gh api "repos/$BASELINE_REPO" --jq .visibility)" = "public"
           python host_candidate/p96_stream_owner/p96_original_engine_owner.py --selftest
           mkdir -p .p96private
           gh release download dsh-baseline-v135dsh-baseline-v135 \
-            --repo "$GH_REPO" \
+            --repo "$BASELINE_REPO" \
             --pattern 'DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk' \
             --dir .p96private
           f=.p96private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
