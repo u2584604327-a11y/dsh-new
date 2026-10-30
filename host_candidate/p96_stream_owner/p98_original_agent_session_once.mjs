@@ -193,6 +193,15 @@ try{
    log('AGENT_REGISTRY_CONSTRUCTOR',agentRegistry?.constructor?.name||'MISSING');
    log('AGENT_REGISTRY_OWN_SHAPE',JSON.stringify(safeOwnShape(agentRegistry)));
    log('AGENT_REGISTRY_METHODS',JSON.stringify(methods(agentRegistry)));
+   const agentFactory=agentRegistry?.factory;
+   log('AGENT_REGISTRY_FACTORY_TYPE',Array.isArray(agentFactory)?'array':typeof agentFactory);
+   log('AGENT_REGISTRY_FACTORY_CONSTRUCTOR',agentFactory?.constructor?.name||'MISSING');
+   log('AGENT_REGISTRY_FACTORY_OWN_SHAPE',JSON.stringify(safeOwnShape(agentFactory)));
+   log('AGENT_REGISTRY_FACTORY_METHODS',JSON.stringify(methods(agentFactory)));
+   for(const name of ['create','resume','prepare','setup','register']){
+     const contract=safeMethodContract(agentFactory,name);
+     if(contract)log('AGENT_REGISTRY_FACTORY_'+name.toUpperCase()+'_CONTRACT',JSON.stringify(contract));
+   }
    for(const name of ['create','requireFactory','register','get']){
      const contract=safeMethodContract(agentRegistry,name);
      if(contract)log('AGENT_REGISTRY_'+name.toUpperCase()+'_CONTRACT',JSON.stringify(contract));
