@@ -69,6 +69,26 @@ process.stdout.write('P98_ORIGINAL_SESSION_CONTROLLER_INJECT='+JSON.stringify(
   sanitizeStatic(SessionController.inject))+'\n');
 process.stdout.write('P98_ORIGINAL_SESSION_CONTROLLER_CONFIG='+JSON.stringify(
   sanitizeStatic(SessionController.Config))+'\n');
+const controllerClassSource=Function.prototype.toString.call(SessionController);
+const controllerAssignments=[...controllerClassSource.matchAll(
+  /this\.([A-Za-z_$][A-Za-z0-9_$]{0,70})\s*=\s*(?:new\s+)?([A-Za-z_$][A-Za-z0-9_$]{0,70})/g
+)].map(x=>({field:x[1],rhsIdentifier:x[2]}));
+const controllerNewCalls=[...controllerClassSource.matchAll(
+  /new\s+([A-Za-z_$][A-Za-z0-9_$]{0,70})\s*\(/g
+)].map(x=>x[1]).filter(safe);
+const controllerThisFields=[...controllerClassSource.matchAll(
+  /this\.([A-Za-z_$][A-Za-z0-9_$]{0,70})/g
+)].map(x=>x[1]).filter(safe);
+const controllerSafeLiterals=[...controllerClassSource.matchAll(
+  /["']([A-Za-z0-9_.:/-]{1,90})["']/g
+)].map(x=>x[1]).filter(x=>!/^(?:http|https):/i.test(x));
+process.stdout.write('P98_ORIGINAL_SESSION_CONTROLLER_CLASS_CONTRACT='+JSON.stringify({
+  constructorArity:SessionController.length,
+  assignments:[...new Map(controllerAssignments.map(x=>[x.field+':'+x.rhsIdentifier,x])).values()].slice(0,40),
+  newCalls:[...new Set(controllerNewCalls)].slice(0,40),
+  thisFields:[...new Set(controllerThisFields)].slice(0,60),
+  safeLiterals:[...new Set(controllerSafeLiterals)].slice(0,60)
+})+'\n');
 const moduleExports=Object.keys(SessionControllerModule).filter(safe).sort();
 process.stdout.write('P98_ORIGINAL_SESSION_CONTROLLER_MODULE_EXPORTS='+JSON.stringify(moduleExports)+'\n');
 for(const name of moduleExports){
