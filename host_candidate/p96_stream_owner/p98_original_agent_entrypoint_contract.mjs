@@ -8,6 +8,7 @@ import {AgentLoop} from '@deepseek-ai/dsh-agent-loop';
 import {SessionStore} from '@deepseek-ai/dsh-session';
 import {AgentRegistry} from '@deepseek-ai/dsh-agent';
 import {SessionController} from '@deepseek-ai/dsh-api-session-controller';
+import * as SessionControllerModule from '@deepseek-ai/dsh-api-session-controller';
 import {LlmRuntime} from '@deepseek-ai/dsh-llm';
 
 const selected=[
@@ -49,6 +50,21 @@ function info(klass,method){
 for(const [label,klass,focus] of selected){
   const methods=focus.map(x=>info(klass,x)).filter(Boolean);
   process.stdout.write('P98_ORIGINAL_ENTRYPOINT='+label+' '+JSON.stringify(methods)+'\n');
+}
+const moduleExports=Object.keys(SessionControllerModule).filter(safe).sort();
+process.stdout.write('P98_ORIGINAL_SESSION_CONTROLLER_MODULE_EXPORTS='+JSON.stringify(moduleExports)+'\n');
+for(const name of moduleExports){
+  const value=SessionControllerModule[name];
+  if(typeof value!=='function')continue;
+  const proto=Object.getPrototypeOf(value.prototype||{})?value.prototype:null;
+  const protoMethods=proto?Object.getOwnPropertyNames(proto)
+    .filter(x=>x!=='constructor'&&safe(x)&&typeof Object.getOwnPropertyDescriptor(proto,x)?.value==='function')
+    .slice(0,35).map(x=>({name:x,arity:Object.getOwnPropertyDescriptor(proto,x).value.length})):[];
+  const staticKeys=Object.getOwnPropertyNames(value)
+    .filter(x=>!['length','name','prototype'].includes(x)&&safe(x)).slice(0,30);
+  process.stdout.write('P98_ORIGINAL_SESSION_CONTROLLER_EXPORT_CONTRACT='+JSON.stringify({
+    name,arity:value.length,prototypeMethods:protoMethods,staticKeys
+  })+'\n');
 }
 process.stdout.write('P98_ORIGINAL_ENTRYPOINT_SOURCE_ONLY=PASS\n');
 process.stdout.write('P98_ORIGINAL_SESSION_CREATED=NO\n');
