@@ -51,6 +51,42 @@ for(const [label,klass,focus] of selected){
   const methods=focus.map(x=>info(klass,x)).filter(Boolean);
   process.stdout.write('P98_ORIGINAL_ENTRYPOINT='+label+' '+JSON.stringify(methods)+'\n');
 }
+function summarizeCall(fn,callee){
+  const body=Function.prototype.toString.call(fn);
+  const needle=callee+'(';
+  const start=body.indexOf(needle);
+  if(start<0)return null;
+  const open=start+callee.length;
+  let depth=0,quote=null,esc=false,end=-1;
+  for(let i=open;i<body.length;i++){
+    const ch=body[i];
+    if(quote){
+      if(esc){esc=false;continue;}
+      if(ch==='\\'){esc=true;continue;}
+      if(ch===quote){quote=null;continue;}
+      continue;
+    }
+    if(ch==="'"||ch==='"'||ch==='\`'){quote=ch;continue;}
+    if(ch==='(')depth++;
+    else if(ch===')'){
+      depth--;
+      if(depth===0){end=i;break;}
+    }
+  }
+  if(end<0)return {callee,balanced:false};
+  const args=body.slice(open+1,end);
+  const ids=[...args.matchAll(/\b([A-Za-z_$][A-Za-z0-9_$]{0,70})\b/g)]
+    .map(x=>x[1]).filter(x=>safe(x)&&!['true','false','null','undefined','return','await','new'].includes(x));
+  const refs=[...args.matchAll(/([A-Za-z_$][A-Za-z0-9_$]{0,70}(?:\??\.[A-Za-z_$][A-Za-z0-9_$]{0,70}){1,4})/g)]
+    .map(x=>x[1].replaceAll('?.','.')).filter(x=>x.split('.').every(safe));
+  const literals=[...args.matchAll(/["']([A-Za-z0-9_.:/-]{1,90})["']/g)]
+    .map(x=>x[1]).filter(x=>!/^(?:http|https):/i.test(x));
+  return {callee,balanced:true,identifiers:[...new Set(ids)].slice(0,35),
+    memberRefs:[...new Set(refs)].slice(0,35),
+    safeLiterals:[...new Set(literals)].slice(0,30)};
+}
+process.stdout.write('P98_ORIGINAL_AGENT_REGISTRY_CREATE_REFLECT_APPLY='+JSON.stringify(
+  summarizeCall(AgentRegistry.prototype.create,'Reflect.apply'))+'\n');
 function sanitizeStatic(value,depth=0){
   if(depth>3)return typeof value;
   if(value===null||value===undefined||typeof value==='boolean'||typeof value==='number')return value;
