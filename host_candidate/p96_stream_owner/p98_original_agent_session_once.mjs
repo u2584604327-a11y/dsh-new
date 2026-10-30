@@ -188,6 +188,25 @@ try{
    log('INBOX_OWN_SHAPE',JSON.stringify(safeOwnShape(handle.inbox)));
    const inboxCtor=Object.getPrototypeOf(handle.inbox)?.constructor;
    log('INBOX_CONSTRUCTOR_ARITY',typeof inboxCtor==='function'?inboxCtor.length:'MISSING');
+   const agentRegistry=context.get('agents');
+   log('AGENT_REGISTRY_TYPE',typeof agentRegistry);
+   log('AGENT_REGISTRY_CONSTRUCTOR',agentRegistry?.constructor?.name||'MISSING');
+   log('AGENT_REGISTRY_OWN_SHAPE',JSON.stringify(safeOwnShape(agentRegistry)));
+   log('AGENT_REGISTRY_METHODS',JSON.stringify(methods(agentRegistry)));
+   for(const name of ['create','requireFactory','register','get']){
+     const contract=safeMethodContract(agentRegistry,name);
+     if(contract)log('AGENT_REGISTRY_'+name.toUpperCase()+'_CONTRACT',JSON.stringify(contract));
+   }
+   for(const key of Object.keys(agentRegistry||{})
+     .filter(k=>/^[A-Za-z_$][A-Za-z0-9_$]{0,64}$/.test(k)).slice(0,30)){
+     const value=agentRegistry[key];
+     if(value instanceof Map){
+       const safeKeys=[...value.keys()].slice(0,40).map(x=>
+         typeof x==='string'&&/^[A-Za-z0-9_.:/-]{1,100}$/.test(x)?x:typeof x);
+       log('AGENT_REGISTRY_MAP_'+key.toUpperCase()+'_SIZE',value.size);
+       log('AGENT_REGISTRY_MAP_'+key.toUpperCase()+'_KEYS',JSON.stringify(safeKeys));
+     }
+   }
    const projectionService=context.get('sessionProjections');
    log('SESSION_PROJECTION_SERVICE_TYPE',typeof projectionService);
    log('SESSION_PROJECTION_SERVICE_METHODS',JSON.stringify(methods(projectionService)));
