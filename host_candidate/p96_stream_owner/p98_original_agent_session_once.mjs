@@ -198,6 +198,16 @@ try{
    log('AGENT_REGISTRY_FACTORY_CONSTRUCTOR',agentFactory?.constructor?.name||'MISSING');
    log('AGENT_REGISTRY_FACTORY_OWN_SHAPE',JSON.stringify(safeOwnShape(agentFactory)));
    log('AGENT_REGISTRY_FACTORY_METHODS',JSON.stringify(methods(agentFactory)));
+   const factoryTarget=agentFactory?.target;
+   log('AGENT_REGISTRY_FACTORY_TARGET_TYPE',Array.isArray(factoryTarget)?'array':typeof factoryTarget);
+   log('AGENT_REGISTRY_FACTORY_TARGET_CONSTRUCTOR',factoryTarget?.constructor?.name||'MISSING');
+   log('AGENT_REGISTRY_FACTORY_TARGET_OWN_SHAPE',JSON.stringify(safeOwnShape(factoryTarget)));
+   log('AGENT_REGISTRY_FACTORY_TARGET_METHODS',JSON.stringify(methods(factoryTarget)));
+   log('AGENT_REGISTRY_FACTORY_TARGET_IS_AGENTLOOP',factoryTarget===loop);
+   for(const name of ['create','resume','resumeWith','prepare','setupAndPublish']){
+     const contract=safeMethodContract(factoryTarget,name);
+     if(contract)log('AGENT_REGISTRY_FACTORY_TARGET_'+name.toUpperCase()+'_CONTRACT',JSON.stringify(contract));
+   }
    for(const name of ['create','resume','prepare','setup','register']){
      const contract=safeMethodContract(agentFactory,name);
      if(contract)log('AGENT_REGISTRY_FACTORY_'+name.toUpperCase()+'_CONTRACT',JSON.stringify(contract));
