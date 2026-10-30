@@ -138,9 +138,15 @@ function callArgumentSummary(body,callee){
     else if(ch==='[')s++; else if(ch===']')s--;
     else if(ch===','&&p===0&&b===0&&s===0)topCommas++;
   }
+  const objectPropertyKeys=[...args.matchAll(/(?:^|[,{])\s*([A-Za-z_$][A-Za-z0-9_$]{0,80})\s*:/g)]
+    .map(x=>x[1]).filter(safeId);
+  const spreads=[...args.matchAll(/\.\.\.([A-Za-z_$][A-Za-z0-9_$]{0,80}(?:\.[A-Za-z_$][A-Za-z0-9_$]{0,80}){0,4})/g)]
+    .map(x=>x[1]).filter(x=>x.split('.').every(safeId));
   return {callee,balanced:true,argCount:args.trim()?topCommas+1:0,
     identifiers:[...new Set(identifiers)].slice(0,35),
     memberRefs:[...new Set(memberRefs)].slice(0,35),
+    objectPropertyKeys:[...new Set(objectPropertyKeys)].slice(0,35),
+    spreadRefs:[...new Set(spreads)].slice(0,20),
     safeLiterals:[...new Set(literals)].slice(0,30)};
 }
 
