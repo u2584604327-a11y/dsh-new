@@ -35,7 +35,7 @@ jobs:
               "github.repository == 'u2584604327-a11y/dsh-new'",
               "github.event.pull_request.head.ref == 'migration/dshe-p98-20261031'",
               "github.event.pull_request.base.ref == 'main'",
-              'GH_REPO: ${{ github.repository }}',
+              'GH_REPO: ' + chr(36) + '{{ github.repository }}',
               'BASELINE_REPO: u2584604327-a11y/dshe',
               'test "$GH_REPO" = "u2584604327-a11y/dsh-new"',
               'test "$BASELINE_REPO" = "u2584604327-a11y/dshe"',
