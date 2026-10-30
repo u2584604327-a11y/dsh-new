@@ -282,6 +282,17 @@ jobs:
             .p96private/p98-session.log
           cat .p96private/p98-session.log
           echo 'P98_REAL_AGENTLOOP_SESSION_CREATE_DIAGNOSTIC_NOT_DEVICE=PASS' >> "$GITHUB_STEP_SUMMARY"
+          cp host_candidate/p96_stream_owner/p98_original_agent_registry_create_once.mjs \
+            .p96private/agent-runtime/p98_original_agent_registry_create_once.mjs
+          env -u GH_TOKEN -u GITHUB_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+            -u ACTIONS_ID_TOKEN_REQUEST_URL -u SSH_AUTH_SOCK \
+            timeout 12s node .p96private/agent-runtime/p98_original_agent_registry_create_once.mjs \
+            > .p96private/p98-factory-create.log
+          grep -Fxq 'P98_FACTORY_CREATE_NETWORK_ATTEMPTS=0' .p96private/p98-factory-create.log
+          grep -Fxq 'P98_FACTORY_CREATE_NO_PROMPT=YES' .p96private/p98-factory-create.log
+          grep -Fxq 'P98_FACTORY_CREATE_NO_TOOL=YES' .p96private/p98-factory-create.log
+          cat .p96private/p98-factory-create.log
+          echo 'P98_ORIGINAL_AGENT_REGISTRY_FACTORY_PATH_DIAGNOSTIC=PASS' >> "$GITHUB_STEP_SUMMARY"
           # P98 inbox send remains BLOCKED in the minimal synthetic harness
           # (ReactLoopInbox.mutate missing required original projection state).
           # Never count a diagnostic failure as a passed session turn.
