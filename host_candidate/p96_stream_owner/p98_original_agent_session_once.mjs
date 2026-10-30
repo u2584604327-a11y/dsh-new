@@ -201,6 +201,53 @@ try{
    log('SESSION_PROJECTION_REGISTRATION_KEYS',JSON.stringify(registrationKeys));
    log('SESSION_PROJECTION_REGISTRATION_DEFINITIONS',JSON.stringify(registrationDefinitions));
    log('INBOX_PROJECTIONS_SAME_SERVICE',handle.inbox?.projections===projectionService);
+   const inboxProjections=handle.inbox?.projections;
+   log('INBOX_PROJECTIONS_TYPE',typeof inboxProjections);
+   log('INBOX_PROJECTIONS_CONSTRUCTOR',inboxProjections?.constructor?.name||'MISSING');
+   log('INBOX_PROJECTIONS_METHODS',JSON.stringify(methods(inboxProjections)));
+   log('INBOX_PROJECTIONS_OWN_SHAPE',JSON.stringify(safeOwnShape(inboxProjections)));
+   log('INBOX_PROJECTIONS_SAME_PROTOTYPE',
+     Object.getPrototypeOf(inboxProjections)===Object.getPrototypeOf(projectionService));
+   log('INBOX_PROJECTIONS_CTX_SAME',
+     inboxProjections?.ctx!==undefined && inboxProjections?.ctx===projectionService?.ctx);
+   const inboxRegs=inboxProjections?.registrations;
+   const inboxRegsIsMap=inboxRegs instanceof Map;
+   const inboxRegsSize=typeof inboxRegs?.size==='number'
+     ?inboxRegs.size:Object.keys(inboxRegs||{}).length;
+   const inboxRegKeys=inboxRegsIsMap
+     ?[...inboxRegs.keys()].slice(0,40).map(safeRegistrationKey)
+     :Object.keys(inboxRegs||{}).filter(k=>/^[A-Za-z0-9_.:/-]{1,100}$/.test(k)).slice(0,40);
+   log('INBOX_PROJECTIONS_REGISTRATIONS_IS_MAP',inboxRegsIsMap);
+   log('INBOX_PROJECTIONS_REGISTRATIONS_SIZE',inboxRegsSize);
+   log('INBOX_PROJECTIONS_REGISTRATION_KEYS',JSON.stringify(inboxRegKeys));
+   function safeProjectionRead(label,fn){
+     try{
+       const value=fn();
+       log(label+'_TYPE',Array.isArray(value)?'array':typeof value);
+       log(label+'_SHAPE',JSON.stringify(safeOwnShape(value)));
+       if(value&&typeof value==='object'){
+         log(label+'_OWN_PROPERTY_NAMES',JSON.stringify(
+           Object.getOwnPropertyNames(value)
+             .filter(k=>/^[A-Za-z_$][A-Za-z0-9_$]{0,64}$/.test(k)).slice(0,35)));
+       }
+     }catch(error){
+       log(label+'_ERROR_TYPE',String(error?.name||'UNKNOWN').replace(/[^A-Za-z0-9_]/g,''));
+       log(label+'_ERROR_MESSAGE',String(error?.message||'').slice(0,100)
+         .replace(/\/[\w/.-]+/g,'<PATH>'));
+     }
+   }
+   if(typeof inboxProjections?.stateOf==='function')
+     safeProjectionRead('INBOX_PROJECTIONS_STATEOF_INBOX',
+       ()=>inboxProjections.stateOf(handle.session,'inbox'));
+   if(typeof projectionService?.stateOf==='function')
+     safeProjectionRead('SERVICE_PROJECTIONS_STATEOF_INBOX',
+       ()=>projectionService.stateOf(handle.session,'inbox'));
+   if(typeof inboxProjections?.snapshot==='function')
+     safeProjectionRead('INBOX_PROJECTIONS_SNAPSHOT',
+       ()=>inboxProjections.snapshot(handle.session,['inbox','turnBoundary']));
+   if(typeof projectionService?.snapshot==='function')
+     safeProjectionRead('SERVICE_PROJECTIONS_SNAPSHOT',
+       ()=>projectionService.snapshot(handle.session,['inbox','turnBoundary']));
    for(const name of methods(projectionService).map(x=>x.name).slice(0,20)){
      const contract=safeMethodContract(projectionService,name);
      if(contract)log('SESSION_PROJECTION_'+name.toUpperCase()+'_CONTRACT',JSON.stringify(contract));
