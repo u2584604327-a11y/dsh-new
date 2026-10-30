@@ -1,0 +1,93 @@
+name: DSH P71 browser result one-shot and WebView persistence
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p71_browser_runtime/**'
+      - 'host_candidate/p43_original_service/**'
+      - 'host_candidate/P71_BROWSER_REPLY_AND_PERSISTENCE_GATE.md'
+      - '.github/workflows/p71-browser-reply-webview.yml'
+permissions:
+  contents: read
+jobs:
+  android35-webview-persist-test:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p71-browser-reply-once-webview-session-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p70-browser-mailbox-no-reply-singleflight-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      P47_NO_HOST_FALLBACK: '1'
+      P49_NODE_STAGE: '0'
+      P51_SIDE_BY_SIDE: '1'
+      P51_X86_SIMULATOR_ONLY: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: JVM exactly-once terminal result and SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          test "$P47_NO_HOST_FALLBACK" = 1
+          test "$P51_SIDE_BY_SIDE" = 1
+          bash -n host_candidate/p71_browser_runtime/run_emulator_profile.sh
+          bash -n host_candidate/p43_original_service/build_embedded_emulator_apk.sh
+          mkdir -p .p71_jvm
+          javac --release 8 -d .p71_jvm \
+            host_candidate/p71_browser_runtime/src/com/dsh/android/p71/P71ToolReplyOnce.java \
+            host_candidate/p71_browser_runtime/test/com/dsh/android/p71/P71ToolReplyOnceTest.java
+          java -cp .p71_jvm com.dsh.android.p71.P71ToolReplyOnceTest > .p71_jvm.log
+          grep -Eq '^P71_TOOL_RESULT_EXACTLY_ONCE_JVM=PASS assertions=[0-9]+$' .p71_jvm.log
+          grep -Fxq 'P71_LATE_REPLY_NOT_RETRIED=PASS' .p71_jvm.log
+          grep -Fxq 'P71_COMMENT_PUBLISH_NATIVE_CONSENT_REQUIRED=PASS' .p71_jvm.log
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          sudo apt-get -qq update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -qq install -y apktool
+          SDK="$ANDROID_HOME"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager";then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 | head -n1 || true)"
+          fi
+          test -n "$manager"
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+          echo 'P71_TOOL_ONCE_ONLY_JVM=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Original SHA-pinned isolated side-by-side APK build
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash host_candidate/p43_original_service/build_embedded_emulator_apk.sh > .p71_build.log 2>&1 || {
+            grep -E 'P43_|P47_|P51_|P71_|error:|Traceback' .p71_build.log | tail -n 45 || true
+            exit 1
+          }
+          grep -Fq 'P51_SIGNED_APK_SEPARATE_PACKAGE_NO_PERMISSIONS=PASS' .p71_build.log
+          grep -Fq 'P47_REBUILT_ORIGINAL_PRIMARY_ENGINE_BRIDGE_NO_HOST_START=PASS' .p71_build.log
+          echo 'P71_PRIVATE_EMULATOR_ONLY_APK_BUILD=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: KVM when available
+        run: if test -c /dev/kvm;then sudo chmod 666 /dev/kvm;fi
+      - name: Android35 synthetic CookieManager and DOM storage reboot witness
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: bash host_candidate/p71_browser_runtime/run_emulator_profile.sh
+      - name: Always delete derived signed fixture and synthetic session
+        if: always()
+        run: |
+          rm -rf .p43tmp .p71_jvm .p71_jvm.log .p71_build.log
+          echo 'P71_REAL_BILIBILI_ACCOUNT_ACCESSED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P71_OWNER_DSH_COOKIES_UNCHANGED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P71_ORIGINAL_ENGINE_AND_TOOL_DISPATCH=NOT_WIRED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P71_FIXED_SIGNED_V139=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

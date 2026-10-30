@@ -1,0 +1,112 @@
+name: DSH P12 legacy log button native safe review adapter (source only)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'host_candidate/p12_native/**'
+      - '.github/workflows/p12-native-logviewer-adapter.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-source-and-dex:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Read SHA-pinned P5 component sources only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input out/src out/classes out/dex
+          gh release download dsh-source-v139-p6 --repo "$GH_REPO" \
+            --pattern DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip --dir input
+          printf '%s  %s\n' 3af586c2c83d1aea67d119357672559eb09371c77ef4e06900bb697c06d11fd5 \
+            input/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip | sha256sum -c -
+          python3 - <<'PY'
+          import io,pathlib,zipfile
+          with zipfile.ZipFile("input/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip") as archive:
+              p5=archive.read("upstream/DSH_V139_P5_AUDIT_FAIL_CLOSED_SOURCE_ONLY.zip")
+          with zipfile.ZipFile(io.BytesIO(p5)) as source:
+              if source.testzip():raise RuntimeError("P5_SOURCE_CRC_BAD")
+              names=sorted(n for n in source.namelist()
+                  if n.startswith("merged_source/src/") and n.endswith(".java"))
+              assert len(names)==9, f"Expected 9 P5 sources, got {len(names)}"
+              for n in names:
+                  p=pathlib.PurePosixPath(n)
+                  assert ".." not in p.parts
+                  output=pathlib.Path("out/src") / p.relative_to("merged_source/src")
+                  output.parent.mkdir(parents=True,exist_ok=True)
+                  output.write_bytes(source.read(n))
+          print("PINNED_P5_SOURCES=9")
+          PY
+      - name: Install Android API35 SDK and D8
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="$(printenv ANDROID_HOME || printenv ANDROID_SDK_ROOT || echo /usr/local/lib/android/sdk)"
+          SDKMANAGER="$(command -v sdkmanager || true)"
+          if test -z "$SDKMANAGER"; then
+            SDKMANAGER="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 2>/dev/null | head -n1 || true)"
+          fi
+          test -n "$SDKMANAGER"
+          "$SDKMANAGER" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+          test -s "$SDK/platforms/android-35/android.jar"
+          test -x "$SDK/build-tools/35.0.0/d8"
+          echo "SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+      - name: Compile original P5 with P12 native Activity user-gesture adapter
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp host_candidate/p12_native/com/dsh/p12/P12LogViewerReviewEntry.java out/src/P12LogViewerReviewEntry.java
+          mapfile -d '' sourcefiles < <(find out/src -name '*.java' -print0 | sort -z)
+          test "${#sourcefiles[@]}" -eq 10
+          javac --release 8 -cp "$SDK_ROOT/platforms/android-35/android.jar" \
+            -d out/classes "${sourcefiles[@]}"
+          jar cf out/P5_P12_NATIVE_SOURCE_ONLY.jar -C out/classes .
+          "$SDK_ROOT/build-tools/35.0.0/d8" --min-api 26 \
+            --lib "$SDK_ROOT/platforms/android-35/android.jar" \
+            --output out/dex out/P5_P12_NATIVE_SOURCE_ONLY.jar
+          test -s out/dex/classes.dex
+          echo 'P12_P5_JAVAC_ANDROID35=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P12_P5_D8_MIN_API26=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Bound source permissions and delivery claim
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("host_candidate/p12_native/com/dsh/p12/P12LogViewerReviewEntry.java")
+          src=p.read_text()
+          assert src.count('public static P12LogViewerReviewEntry attach(')==1
+          assert 'com.dsh.android.LogViewerActivity' in src
+          assert 'logExport' in src and 'logUpload' in src
+          assert 'new NativeDiagnosticReview(' in src and 'new AndroidFdQueue(' in src
+          assert 'Os.lstat(' in src and '0077' in src
+          assert 'setOnClickListener(' in src
+          assert 'P10 legacy export remains disabled' in src
+          assert 'HttpURLConnection' not in src and 'java.net.URL' not in src
+          print('P12_SOURCE_NO_NETWORK_TRANSPORT=PASS')
+          PY
+          {
+            echo 'P12_SOURCE_COMPILED=PASS'
+            echo 'P12_LEGACY_LOGVIEWER_BUTTON_INSTALLER=SOURCE_IMPLEMENTED_NOT_CALLED'
+            echo 'P12_LIFECYCLE_HOOK_IN_ORIGINAL_HOST=NO'
+            echo 'P12_APPROVED_SEND_TRANSPORT=NO'
+            echo 'P12_GENERIC_NODE_FS_EGRESS=NOT_BLOCKED'
+            echo 'P12_ART_INSTRUMENTATION=NOT_RUN'
+            echo 'P12_SIGNED_V139_APK=NO'
+            echo 'No binary artifact uploaded, no original APK altered.'
+          } >> "$GITHUB_STEP_SUMMARY"

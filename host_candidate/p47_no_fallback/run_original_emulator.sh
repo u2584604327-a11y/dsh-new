@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Original com.dsh.android disposable emulator, NOT owner's app, NOT a v139.
+bash host_candidate/p46_resource_bundle/run_p46_emulator.sh
+log="$(adb logcat -d -v brief -s P43_HOST_BINDER:I '*:S')"
+grep -Fq 'P47_REAL_ORIGINAL_MAIN_DEX_ENGINE_BRIDGE_DENIES_HOST_START=PASS' <<< "$log"
+grep -Fq 'P47_NO_HOST_PROCESSBUILDER_FALLBACK=PASS' <<< "$log"
+grep -Fq 'P47_PRODUCTION_NODE_ENGINE_RUNNING=NO' <<< "$log"
+echo 'P47_ACTUAL_ORIGINAL_DSH_MAIN_DEX_BRIDGE_NO_FALLBACK=PASS_NARROW'
+echo 'P47_NO_HOST_NODE_PROCESS_SPAWNED_BY_PROBE=PASS_NARROW'
+echo 'P47_P43_TO_P46_ORIGINAL_ISOLATED_BINDER=PASS'
+echo 'P47_REAL_ENGINE_MANAGER_COROUTINE_PARITY=NOT_TESTED'
+echo 'P47_REAL_ISOLATED_NODE_START=NOT_IMPLEMENTED'
+echo 'P47_FIXED_SIGNED_V139_RELEASE=BLOCKED'

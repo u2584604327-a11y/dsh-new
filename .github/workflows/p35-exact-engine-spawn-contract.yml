@@ -1,0 +1,80 @@
+name: DSH P35 exact original EngineManager startup lifecycle contract
+on:
+  pull_request:
+    paths:
+      - 'host_candidate/p35_original_engine_spawn_contract.py'
+      - 'host_candidate/P35_EXACT_ENGINE_SPAWN_CONTRACT_GATE.md'
+      - '.github/workflows/p35-exact-engine-spawn-contract.yml'
+permissions:
+  contents: read
+jobs:
+  original-v138-cold-engine-invoke-contract:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p35-exact-engine-spawn-contract-20261029'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate PRIVATE repo and pinned androguard dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GH_REPO" --jq '.visibility')" = private
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          python -m py_compile host_candidate/p35_original_engine_spawn_contract.py
+          echo 'P35_PRIVATE_ORIGINAL_SOURCE_ONLY=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Retrieve exact original signed v138 from private baseline release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p35tmp
+          gh release download dsh-baseline-v135dsh-baseline-v135 \
+            --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --dir .p35tmp
+          printf '%s  %s\n' \
+            3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            .p35tmp/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk | sha256sum -c -
+          echo 'P35_EXACT_SIGNED_V138_SHA256=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Extract bounded engine-start ProcessBuilder and shutdown callback API contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python host_candidate/p35_original_engine_spawn_contract.py \
+            .p35tmp/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --report .p35tmp/original-engine-invoke-contract.json
+          python3 - <<'PY'
+          import json
+          r=json.load(open(".p35tmp/original-engine-invoke-contract.json"))
+          assert r["exact_original_signed_apk_sha256"]=="3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5"
+          assert r["primary_code_off"]==3163260
+          assert r["primary_start_pc"]==3912
+          assert len(r["primary_start_invokes"])==1
+          assert r["original_apk_modified"] is False
+          assert r["original_DSH_runtime_wiring"]=="NOT_IMPLEMENTED"
+          print("P35_EXACT_ORIGINAL_ENGINE_START_CALLSITE=PASS")
+          print("P35_CALLSITE_ARGUMENT_AND_LIFECYCLE_API_SLICES=PASS_STATIC")
+          print("P35_REAL_ENGINE_MIGRATION_TO_ISOLATED_UID=NOT_IMPLEMENTED")
+          print("P35_P32_REAL_HOST_CONNECTOR=NOT_IMPLEMENTED")
+          print("P35_V139_RELEASE=BLOCKED")
+          PY
+          echo 'P35_ENGINE_COROUTINE_START_AND_CALLBACK_CONTRACT=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P35_ORIGINAL_APK_MUTATED_OR_SIGNED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P35_ENGINEMANAGER_ISOLATED_UID_LIVE_WIRING=NOT_IMPLEMENTED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always destroy original APK and ephemeral traced metadata
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p35tmp
+          echo 'P35_PRIVATE_ORIGINAL_DSH_SIGNATURE_OR_USER_PHONE_CHANGED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P35_NO_BINARY_ACTIONS_ARTIFACT_OR_RELEASE=YES' >> "$GITHUB_STEP_SUMMARY"

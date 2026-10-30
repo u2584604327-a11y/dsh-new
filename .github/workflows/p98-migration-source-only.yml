@@ -1,0 +1,84 @@
+name: P98 migration source-only relocation gate
+on:
+  push:
+    branches:
+      - migration/dshe-p98-20261031
+    paths:
+      - '.github/workflows/p98-migration-source-only.yml'
+permissions:
+  contents: read
+jobs:
+  no-original-binary-no-model-no-tools:
+    if: github.repository == 'u2584604327-a11y/dsh-new' && github.ref == 'refs/heads/migration/dshe-p98-20261031'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify historical release source is read-only and SHA-locked
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('.github/workflows/p96-original-stream-owner.yml')
+          s=p.read_text(encoding='utf-8')
+          required=(
+              "github.repository == 'u2584604327-a11y/dsh-new'",
+              "github.event.pull_request.head.ref == 'migration/dshe-p98-20261031'",
+              "github.event.pull_request.base.ref == 'main'",
+              'GH_REPO: ' + chr(36) + '{{ github.repository }}',
+              'BASELINE_REPO: u2584604327-a11y/dshe',
+              'test "$GH_REPO" = "u2584604327-a11y/dsh-new"',
+              'test "$BASELINE_REPO" = "u2584604327-a11y/dshe"',
+              '3af586c2c83d1aea67d119357672559eb09371c77ef4e06900bb697c06d11fd5',
+              '3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5',
+              'P98_ORIGINAL_AGENTLOOP_INBOX_SEND=BLOCKED_PRECONDITION_NOT_MET',
+              'P98_ORIGINAL_AGENTLOOP_AUTO_CONTINUATION=NOT_TESTED',
+          )
+          for token in required:
+              assert token in s, 'MISSING_REQUIRED_RELOCATION_OR_STOP_GATE: '+token[:100]
+          assert s.count('--repo "$BASELINE_REPO"') == 2, 'RELEASE_DOWNLOAD_MUST_USE_HISTORICAL_REPO'
+          assert 'test "$(gh api "repos/$GH_REPO" --jq .private)" = true' not in s, 'OBSOLETE_PRIVATE_GATE'
+          assert 'gh release download' in s, 'DO_NOT_REMOVE_SHA_PINNED_ORIGINAL_TESTS'
+          print('P98_MIGRATION_SOURCE_PROVENANCE_AND_ORIGINAL_STOP_GATE=PASS')
+          PY
+      - name: Pure JVM owner and fail-closed regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p98-migration-classes
+          javac --release 8 -d .p98-migration-classes \
+            host_candidate/p90_send_evidence/src/com/dsh/android/p90/P90SendReceiptGate.java \
+            host_candidate/p92_dsh_route/src/com/dsh/android/p92/P92DshRouteGate.java \
+            host_candidate/p92_dsh_route/test/com/dsh/android/p92/P92DshRouteGateTest.java
+          java -cp .p98-migration-classes com.dsh.android.p92.P92DshRouteGateTest | tee .p98-migration-p92.log
+          grep -Fxq 'P92_ORIGINAL_SESSION_RECHECK_AND_409_NO_RETRY=PASS' .p98-migration-p92.log
+          grep -Fxq 'P92_ORIGINAL_HTTP200_NEVER_FAKE_ASSISTANT_COMPLETION=PASS' .p98-migration-p92.log
+          rm -rf .p98-migration-classes .p98-migration-p92.log
+      - name: Pure Node profile and capability regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test host_candidate/p96_stream_owner/original_dsh_omnigate_profile.test.mjs
+          node --test host_candidate/p96_stream_owner/p98_original_node_capabilities.test.mjs
+      - name: Explicit evidence boundary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo 'P98_MIGRATION_SOURCE_ONLY=YES'
+            echo 'P98_ORIGINAL_RELEASE_SHA_PINNED_TESTS=NOT_EXECUTED_IN_THIS_WORKFLOW'
+            echo 'P98_ORIGINAL_AGENTLOOP_INBOX_SEND=BLOCKED_PRECONDITION_NOT_MET'
+            echo 'P98_ORIGINAL_AGENTLOOP_AUTO_CONTINUATION=NOT_TESTED'
+            echo 'P98_ANDROID_ENGINE_MANAGER=NOT_WIRED'
+            echo 'P98_SIGNING_OR_APK_RELEASE=NOT_PERFORMED'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,289 @@
+name: P96 exact original DSH provider isolated streaming compatibility
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p96_stream_owner/**'
+      - 'host_candidate/p92_dsh_route/**'
+      - 'host_candidate/patch_token_usage_p14.py'
+      - 'host_candidate/test_token_p14.mjs'
+      - '.github/workflows/p96-original-stream-owner.yml'
+permissions:
+  contents: read
+jobs:
+  one-source-locked-owner-check:
+    if: >-
+      github.repository == 'u2584604327-a11y/dsh-new' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'migration/dshe-p98-20261031' &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 28
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BASELINE_REPO: u2584604327-a11y/dshe
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - name: Verify unchanged bubble behavior and corrected original-provider gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p96-jvm
+          javac --release 8 -d .p96-jvm \
+            host_candidate/p90_send_evidence/src/com/dsh/android/p90/P90SendReceiptGate.java \
+            host_candidate/p92_dsh_route/src/com/dsh/android/p92/P92DshRouteGate.java \
+            host_candidate/p92_dsh_route/test/com/dsh/android/p92/P92DshRouteGateTest.java
+          java -cp .p96-jvm com.dsh.android.p92.P92DshRouteGateTest > .p96-jvm/result.log
+          for gate in \
+            P92_DSH_EDITOR_FAIL_CLOSED_BEFORE_OMNIGATE=PASS \
+            P92_8787_VERIFIED_OWNER_PREFLIGHT_AND_409_FAIL_CLOSED=PASS \
+            P92_ONE_SHOT_NO_AUTO_RETRY_AND_HTTP200_NOT_DELIVERY=PASS \
+            P92_MAIN_AND_OVERLAY_OWNER_EXCLUSIVE=PASS \
+            P92_ORIGINAL_PROVIDER_NO_WEB_BUBBLE_DEPENDENCY=PASS \
+            P92_ORIGINAL_SESSION_RECHECK_AND_409_NO_RETRY=PASS \
+            P92_HTTP200_AND_TURN_NOT_MODEL_REPLY=PASS \
+            P92_ORIGINAL_HTTP200_NEVER_FAKE_ASSISTANT_COMPLETION=PASS; do
+            grep -Fxq "$gate" .p96-jvm/result.log
+          done
+          cat .p96-jvm/result.log
+          rm -rf .p96-jvm
+          echo 'P96_P92_EXISTING_BUBBLE_AND_ORIGINAL_PROVIDER_ROUTE_REGRESSION=PASS' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Test existing original Node to OmniGate read-only preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test host_candidate/p96_stream_owner/omnigate_local_preflight.test.mjs
+          node --test host_candidate/p96_stream_owner/original_dsh_omnigate_profile.test.mjs
+          node --test host_candidate/p96_stream_owner/p98_original_node_capabilities.test.mjs
+          node host_candidate/p96_stream_owner/p98_original_node_capabilities.mjs \
+            | tee .p98-ci-runner-node-capabilities.log
+          grep -q '"realAndroidEngineManagerVerified":false' .p98-ci-runner-node-capabilities.log
+          echo 'P98_READONLY_RUNTIME_CAPABILITY_PROBE_RUNNER_ONLY=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P98_PHONE_BUNDLED_NODE_CAPABILITIES=NOT_OBSERVED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P96_ORIGINAL_PI_AI_CONFIG_PROFILE_NO_SECRET_AND_NO_GUESS=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P96_DSH_8787_HOST_AND_OVERLAY_READONLY_PREFLIGHT=PASS' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: P14 token usage source and provenance regression (no APK release)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p14verify/input .p14verify/out
+          gh release download dsh-source-v139-p6 --repo "$BASELINE_REPO" \
+            --pattern DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip \
+            --dir .p14verify/input
+          printf '%s  %s\n' \
+            3af586c2c83d1aea67d119357672559eb09371c77ef4e06900bb697c06d11fd5 \
+            .p14verify/input/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip \
+            | sha256sum -c -
+          python3 - <<'PY'
+          import io, pathlib, zipfile, hashlib
+          path='.p14verify/input/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip'
+          with zipfile.ZipFile(path) as outer:
+              with zipfile.ZipFile(io.BytesIO(outer.read('output/DSH_V139_P6_ASSET_OVERLAY_NOT_APK.zip'))) as inner:
+                  blob=inner.read('assets/browser-tool.zip')
+          assert hashlib.sha256(blob).hexdigest()=='aedb0a6582619c319ff85d13d6ad6f1a060c12d896fbbf1068575356190e7f37'
+          pathlib.Path('.p14verify/out/browser-tool-p6.zip').write_bytes(blob)
+          PY
+          python3 host_candidate/patch_token_usage_p14.py \
+            .p14verify/out/browser-tool-p6.zip \
+            --output .p14verify/out/browser-tool-p14.zip \
+            --js-output .p14verify/out/mobile-ui-p14-client.js
+          node --check .p14verify/out/mobile-ui-p14-client.js
+          node host_candidate/test_token_p14.mjs .p14verify/out/mobile-ui-p14-client.js
+          rm -rf .p14verify
+          echo 'P14_TOKEN_DISPLAY_SOURCE_PROVENANCE_CI=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P14_REAL_LAN_USAGE_AND_PHONE_UI=NOT_VERIFIED' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify exact original modules and run isolated synthetic protocol tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dsh-new"
+          test "$BASELINE_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .visibility)" = "public"
+          test "$(gh api "repos/$BASELINE_REPO" --jq .visibility)" = "public"
+          python host_candidate/p96_stream_owner/p96_original_engine_owner.py --selftest
+          mkdir -p .p96private
+          gh release download dsh-baseline-v135dsh-baseline-v135 \
+            --repo "$BASELINE_REPO" \
+            --pattern 'DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk' \
+            --dir .p96private
+          f=.p96private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+          printf '%s  %s\n' \
+            3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 "$f" \
+            | sha256sum -c - >/dev/null
+          python host_candidate/p96_stream_owner/p96_original_engine_owner.py \
+            --original "$f" | tee .p96private/audit.log
+          grep -Fxq 'P96_EXACT_ORIGINAL_NODE_WEB_OWNER_AUDIT=PASS' .p96private/audit.log
+          grep -Fxq 'P96_REAL_ORIGINAL_WEB_CHAT_RESPONSE_READ_CALLBACK_WIRED=NO' .p96private/audit.log
+          grep '^P96_SOURCE_OWNER_CATEGORIES=' .p96private/audit.log >> "$GITHUB_STEP_SUMMARY"
+          python host_candidate/p96_stream_owner/p96_cordis_boundary.py --selftest
+          python host_candidate/p96_stream_owner/p96_cordis_boundary.py \
+            --original "$f" | tee .p96private/cordis.log
+          grep -Fxq 'P96_FIRSTPARTY_ORIGINAL_PACKAGE_BOUNDARY=PASS' .p96private/cordis.log
+          grep -Fxq 'P96_ORIGINAL_LIVE_REPLY_BRIDGE=NOT_WIRED' .p96private/cordis.log
+          grep '^P96_FIRSTPARTY_CORDIS_CATEGORIES=' .p96private/cordis.log >> "$GITHUB_STEP_SUMMARY"
+          # Read exact original provider/session signatures without editing the engine.
+          python host_candidate/p96_stream_owner/p96_provider_contract.py --original "$f" \
+            > .p96private/provider-contract.log
+          grep -Fxq 'P96_EXACT_ORIGINAL_MODEL_PROVIDER_PREIMAGE=PASS' .p96private/provider-contract.log
+          grep -Fxq 'P96_ORIGINAL_PROVIDER_OR_SESSION_MODIFIED=NO' .p96private/provider-contract.log
+          grep '^P96_CONTRACT_ANCHOR=' .p96private/provider-contract.log >> "$GITHUB_STEP_SUMMARY"
+
+          # Original source is transient and never archived or committed.
+          python host_candidate/p96_stream_owner/p96_extract_pi_ai_fixture.py \
+            --original "$f" --out .p96private/runtime
+          cp host_candidate/p96_stream_owner/p96_original_pi_ai_probe.mjs \
+            .p96private/runtime/p96_original_pi_ai_probe.mjs
+          # Execute under a credential-free environment and a short deadline.
+          env -u GH_TOKEN -u GITHUB_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+            -u ACTIONS_ID_TOKEN_REQUEST_URL -u SSH_AUTH_SOCK \
+            timeout 15s node .p96private/runtime/p96_original_pi_ai_probe.mjs
+          echo 'P96_ORIGINAL_PI_AI_RUNTIME_IMPORT=PASS' >> "$GITHUB_STEP_SUMMARY"
+          cp host_candidate/p96_stream_owner/p96_real_original_stream_fixture.mjs \
+            .p96private/runtime/p96_real_original_stream_fixture.mjs
+          env -u GH_TOKEN -u GITHUB_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+            -u ACTIONS_ID_TOKEN_REQUEST_URL -u SSH_AUTH_SOCK \
+            timeout 18s node .p96private/runtime/p96_real_original_stream_fixture.mjs
+          echo 'P96_EXACT_ORIGINAL_PI_AI_STREAM_TO_LOCAL_SSE_FIXTURE=PASS' >> "$GITHUB_STEP_SUMMARY"
+          cp host_candidate/p96_stream_owner/p96_real_original_tool_fixture.mjs \
+            .p96private/runtime/p96_real_original_tool_fixture.mjs
+          env -u GH_TOKEN -u GITHUB_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+            -u ACTIONS_ID_TOKEN_REQUEST_URL -u SSH_AUTH_SOCK \
+            timeout 18s node .p96private/runtime/p96_real_original_tool_fixture.mjs
+          echo 'P96_EXACT_ORIGINAL_PI_AI_TOOL_RESULT_ROUNDTRIP_FIXTURE=PASS' >> "$GITHUB_STEP_SUMMARY"
+
+
+          python host_candidate/p96_stream_owner/p96_original_agent_contract.py \
+            --original "$f" > .p96private/agent-contract.log
+          grep -Fxq 'P96_AGENT_ORIGINAL_SOURCE_LOCK=PASS' .p96private/agent-contract.log
+          grep -Fxq 'P96_AGENT_ORIGINAL_TOOL_DISPATCH_WIRED=NO' .p96private/agent-contract.log
+          grep '^P96_ORIGINAL_AGENTLOOP_PACKAGE_NODE_ENGINE=' \
+            .p96private/agent-contract.log
+          grep '^P96_AGENT_EVENT_CONTRACT=' .p96private/agent-contract.log >> "$GITHUB_STEP_SUMMARY"
+          grep '^P96_AGENT_HOOK=' .p96private/agent-contract.log | head -n 28
+          echo 'P96_AGENT_FIRSTPARTY_DISPATCH_CONTRACT_SOURCE_CHECK=PASS' >> "$GITHUB_STEP_SUMMARY"
+          # Execute only the exact original first-party class imports in a
+          # separate ephemeral closure; no constructors or tools are run.
+          python host_candidate/p96_stream_owner/p96_extract_original_agent_runtime.py \
+            --original "$f" --out .p96private/agent-runtime
+          cp host_candidate/p96_stream_owner/p96_original_agent_runtime_probe.mjs \
+            .p96private/agent-runtime/p96_original_agent_runtime_probe.mjs
+          env -u GH_TOKEN -u GITHUB_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+            -u ACTIONS_ID_TOKEN_REQUEST_URL -u SSH_AUTH_SOCK \
+            timeout 20s node .p96private/agent-runtime/p96_original_agent_runtime_probe.mjs
+          echo 'P96_EXACT_ORIGINAL_AGENT_TOOL_RUNTIME_IMPORT=PASS' >> "$GITHUB_STEP_SUMMARY"
+          cp host_candidate/p96_stream_owner/p96_original_tool_result_event_fixture.mjs \
+            .p96private/agent-runtime/p96_original_tool_result_event_fixture.mjs
+          env -u GH_TOKEN -u GITHUB_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+            -u ACTIONS_ID_TOKEN_REQUEST_URL -u SSH_AUTH_SOCK \
+            timeout 18s node .p96private/agent-runtime/p96_original_tool_result_event_fixture.mjs
+          echo 'P96_ORIGINAL_TOOL_RUNTIME_RESULT_EVENT_IN_MEMORY=PASS' >> "$GITHUB_STEP_SUMMARY"
+          cp host_candidate/p96_stream_owner/p96_original_tool_cordis_event_fixture.mjs \
+            .p96private/agent-runtime/p96_original_tool_cordis_event_fixture.mjs
+          env -u GH_TOKEN -u GITHUB_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+            -u ACTIONS_ID_TOKEN_REQUEST_URL -u SSH_AUTH_SOCK \
+            timeout 18s node .p96private/agent-runtime/p96_original_tool_cordis_event_fixture.mjs
+          echo 'P96_ORIGINAL_CORDIS_TOOLS_RESULT_OBSERVED=PASS' >> "$GITHUB_STEP_SUMMARY"
+          cp host_candidate/p96_stream_owner/p96_original_tool_runtime_execute_fixture.mjs \
+            .p96private/agent-runtime/p96_original_tool_runtime_execute_fixture.mjs
+          env -u GH_TOKEN -u GITHUB_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+            -u ACTIONS_ID_TOKEN_REQUEST_URL -u SSH_AUTH_SOCK \
+            timeout 18s node .p96private/agent-runtime/p96_original_tool_runtime_execute_fixture.mjs
+          echo 'P96_REAL_ORIGINAL_TOOL_RUNTIME_REGISTER_EXECUTE_NOTIFY=PASS' >> "$GITHUB_STEP_SUMMARY"
+          cp host_candidate/p96_stream_owner/p96_original_model_toolruntime_roundtrip.mjs \
+            .p96private/agent-runtime/p96_original_model_toolruntime_roundtrip.mjs
+          env -u GH_TOKEN -u GITHUB_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+            -u ACTIONS_ID_TOKEN_REQUEST_URL -u SSH_AUTH_SOCK \
+            timeout 20s node .p96private/agent-runtime/p96_original_model_toolruntime_roundtrip.mjs
+          echo 'P96_ORIGINAL_PI_AI_AND_TOOL_RUNTIME_CORDIS_ROUNDTRIP=PASS' >> "$GITHUB_STEP_SUMMARY"
+          cp host_candidate/p96_stream_owner/p96_original_agentloop_readiness.mjs \
+            .p96private/agent-runtime/p96_original_agentloop_readiness.mjs
+          env -u GH_TOKEN -u GITHUB_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+            -u ACTIONS_ID_TOKEN_REQUEST_URL -u SSH_AUTH_SOCK \
+            timeout 18s node .p96private/agent-runtime/p96_original_agentloop_readiness.mjs \
+            > .p96private/agentloop-readiness.log
+          grep -Fxq 'P96_ORIGINAL_AGENTLOOP_ORIGINAL_TOOL_RUNTIME_READY=YES' \
+            .p96private/agentloop-readiness.log
+          grep -Fxq 'P96_ORIGINAL_AGENTLOOP_ANDROID_ENGINE_MANAGER_CONNECTED=NO' \
+            .p96private/agentloop-readiness.log
+          cat .p96private/agentloop-readiness.log
+          echo 'P96_REAL_AGENTLOOP_INJECTION_CONTRACT_OBSERVED=PASS' >> "$GITHUB_STEP_SUMMARY"
+          cp host_candidate/p96_stream_owner/p96_agentloop_services_audit.mjs \
+            .p96private/agent-runtime/p96_agentloop_services_audit.mjs
+          env -u GH_TOKEN -u GITHUB_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+            -u ACTIONS_ID_TOKEN_REQUEST_URL -u SSH_AUTH_SOCK \
+            timeout 15s node .p96private/agent-runtime/p96_agentloop_services_audit.mjs \
+            > .p96private/agent-services.log
+          grep -Fxq 'P96_AGENT_SERVICE_DEPENDENCY_AUDIT=PASS' .p96private/agent-services.log
+          cat .p96private/agent-services.log
+          echo 'P96_ORIGINAL_AGENT_SERVICE_EXPORTS_DISCOVERED=PASS' >> "$GITHUB_STEP_SUMMARY"
+          cp host_candidate/p96_stream_owner/p96_agentloop_original_services_boot.mjs \
+            .p96private/agent-runtime/p96_agentloop_original_services_boot.mjs
+          env -u GH_TOKEN -u GITHUB_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+            -u ACTIONS_ID_TOKEN_REQUEST_URL -u SSH_AUTH_SOCK \
+            timeout 20s node .p96private/agent-runtime/p96_agentloop_original_services_boot.mjs \
+            > .p96private/agent-boot.log
+          grep -Fxq 'P96_REAL_ORIGINAL_BOOT_ORIGINAL_SERVICE_PROVIDERS_SOURCE_LOCKED=YES' \
+            .p96private/agent-boot.log
+          grep -Fxq 'P96_REAL_ORIGINAL_BOOT_REAL_AGENTLOOP_SERVICE_READY=PASS' \
+            .p96private/agent-boot.log
+          grep -Fxq 'P96_REAL_ORIGINAL_BOOT_PROMISE_WITH_RESOLVERS=function' \
+            .p96private/agent-boot.log
+          grep -Fxq 'P96_REAL_ORIGINAL_BOOT_ANDROID_ENGINE_MANAGER_CONNECTED=NO' \
+            .p96private/agent-boot.log
+          cat .p96private/agent-boot.log
+          echo 'P96_ORIGINAL_AGENT_SERVICE_RUNTIME_DEPENDENCIES_OBSERVED=PASS' >> "$GITHUB_STEP_SUMMARY"
+          # Read only method identifiers for the exact original AgentLoop
+          # session/turn callsites. No session or model request is executed.
+          cp host_candidate/p96_stream_owner/p98_original_agent_entrypoint_contract.mjs \
+            .p96private/agent-runtime/p98_original_agent_entrypoint_contract.mjs
+          env -u GH_TOKEN -u GITHUB_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+            -u ACTIONS_ID_TOKEN_REQUEST_URL -u SSH_AUTH_SOCK \
+            timeout 12s node .p96private/agent-runtime/p98_original_agent_entrypoint_contract.mjs \
+            > .p96private/p98-contract.log
+          grep -Fxq 'P98_ORIGINAL_ENTRYPOINT_SOURCE_ONLY=PASS' .p96private/p98-contract.log
+          grep -Fxq 'P98_ORIGINAL_SESSION_CREATED=NO' .p96private/p98-contract.log
+          cat .p96private/p98-contract.log
+          echo 'P98_EXACT_AGENT_SESSION_METHOD_CONTRACT=PASS' >> "$GITHUB_STEP_SUMMARY"
+          # One-shot real AgentLoop.create; no user prompt, agent or network.
+          cp host_candidate/p96_stream_owner/p98_original_agent_session_once.mjs \
+            .p96private/agent-runtime/p98_original_agent_session_once.mjs
+          env -u GH_TOKEN -u GITHUB_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+            -u ACTIONS_ID_TOKEN_REQUEST_URL -u SSH_AUTH_SOCK \
+            timeout 12s node .p96private/agent-runtime/p98_original_agent_session_once.mjs \
+            > .p96private/p98-session.log
+          grep -Fxq 'P98_ORIGINAL_SESSION_ACTUAL_SESSION_CREATED_AND_STORED=PASS' \
+            .p96private/p98-session.log
+          grep -Fxq 'P98_ORIGINAL_SESSION_SOURCE_LOCKED_ONE_SHOT_PROBE=PASS' \
+            .p96private/p98-session.log
+          grep -Fxq 'P98_ORIGINAL_SESSION_ORIGINAL_ANDROID_ENGINE_ATTACHED=NO' \
+            .p96private/p98-session.log
+          cat .p96private/p98-session.log
+          echo 'P98_REAL_AGENTLOOP_SESSION_CREATE_DIAGNOSTIC_NOT_DEVICE=PASS' >> "$GITHUB_STEP_SUMMARY"
+          # P98 inbox send remains BLOCKED in the minimal synthetic harness
+          # (ReactLoopInbox.mutate missing required original projection state).
+          # Never count a diagnostic failure as a passed session turn.
+          echo 'P98_ORIGINAL_AGENTLOOP_INBOX_SEND=BLOCKED_PRECONDITION_NOT_MET' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P98_ORIGINAL_AGENTLOOP_AUTO_CONTINUATION=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+
+          echo 'P96_ORIGINAL_ENGINE_ARCHIVE_EXACT_SHA_AND_CATEGORIES=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Erase local original and mark release boundary
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p96private
+          {
+            echo 'P96_DSH_ORIGINAL_CHAT_NETWORK_AND_UI_NOT_MODIFIED=YES'
+            echo 'P96_STREAM_PRODUCTION_OWNER_CALLSITE=NOT_VERIFIED'
+            echo 'P96_NO_SIGNER_NO_RELEASE_NO_DEVICE_CHANGES=YES'
+          } >> "$GITHUB_STEP_SUMMARY"

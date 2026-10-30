@@ -1,0 +1,103 @@
+name: DSH P48 original DSH host and isolated process proxy end-to-end
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p47_no_fallback/**'
+      - 'host_candidate/p48_process_proxy/**'
+      - 'host_candidate/p43_original_service/**'
+      - 'host_candidate/P48_ORIGINAL_HOST_ISOLATED_CHILD_P37_GATE.md'
+      - '.github/workflows/p48-original-isolated-child-p37-process.yml'
+permissions:
+  contents: read
+concurrency:
+  group: p48-original-host-process-proxy-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  original-host-isolated-system-child-p37-process-proxy:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p48-original-host-process-proxy-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p47-original-engine-no-host-fallback-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Fail-closed original Node bridge JVM canary and static Python validity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GH_REPO" --jq .visibility)" = private
+          mkdir -p .p47tests
+          python -m py_compile host_candidate/p47_no_fallback/p47_gate.py
+          javac --release 8 -d .p47tests \
+            host_candidate/p47_no_fallback/android/com/dsh/android/p47/P47LaunchGate.java \
+            host_candidate/p47_no_fallback/test/com/dsh/android/p47/P47LaunchGateTest.java
+          java -cp .p47tests com.dsh.android.p47.P47LaunchGateTest | tee .p47-jvm.txt
+          grep -Eq '^P47_JAVA_PROCESS_BUILDER_DENY_TESTS=PASS assertions=[0-9]+$' .p47-jvm.txt
+          grep -Fxq 'P47_NO_HOST_SPAWN_CANARY=PASS' .p47-jvm.txt
+          ! grep -E 'builder\.start\(|getRuntime\(\)\.exec\(|new ProcessBuilder\(' \
+             host_candidate/p47_no_fallback/android/com/dsh/android/p47/P47LaunchGate.java
+          grep -Fq 'new ProcessBuilder("/system/bin/id","-u")' \
+            host_candidate/p48_process_proxy/android/com/dsh/android/p48/P48FixedIsolatedChild.java
+          grep -Fq 'new P37RemoteProcess(' \
+            host_candidate/p48_process_proxy/android/com/dsh/android/p48/P48HostProcessProbe.java
+          grep -Fq 'P48FixedIsolatedChild.START' \
+            host_candidate/p43_original_service/android/com/dsh/android/p43/P43IsolatedWorker.java
+          echo 'P48_P47_NO_FALLBACK_JVM_GATE=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Restore immutable original DSH APK build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          sudo apt-get -qq update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -qq install -y apktool
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager"; then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 | head -n1 || true)"
+          fi
+          test -n "$manager"
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Rebuild actual original DSH with P47 no-fallback and P48 isolated child / P37 proxy
+        shell: bash
+        run: |
+          set -euo pipefail
+          P47_NO_HOST_FALLBACK=1 bash host_candidate/p43_original_service/build_embedded_emulator_apk.sh
+          echo 'P48_ORIGINAL_APK_P37_PROXY_AND_ISOLATED_WORKER_COMPILED=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P48_ORIGINAL_MAIN_START_P47_DENY_RETAINED=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+      - name: Enable emulator hardware acceleration when available
+        shell: bash
+        run: if test -c /dev/kvm; then sudo chmod 666 /dev/kvm; fi
+      - name: Fresh Android35 original DSH actual isolated child and P37 Process facade
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: bash host_candidate/p48_process_proxy/run_original_emulator.sh
+      - name: Always discard temporary original APK, ephemeral key and tests
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p43tmp .p47tests .p47-jvm.txt
+          echo 'P48_ORIGINAL_V138_PHONE_APK_MODIFIED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P48_FIXED_SIGNING_KEY_USED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P48_TEST_APK_PUBLISHED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P48_NODE_PRODUCTION_ISOLATION=NOT_IMPLEMENTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P48_ORIGINAL_CHAT_BROWSER_FILES_PARITY=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P48_V139_RELEASE=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

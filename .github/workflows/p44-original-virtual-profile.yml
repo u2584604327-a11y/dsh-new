@@ -1,0 +1,91 @@
+name: DSH P44 original APK virtual device profile over verified isolated Binder
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p44_virtual_device_profile/**'
+      - 'host_candidate/p43_original_service/**'
+      - 'host_candidate/P44_VIRTUAL_DEVICE_SCOPE_AND_TRUST_GATE.md'
+      - '.github/workflows/p44-original-virtual-profile.yml'
+permissions:
+  contents: read
+concurrency:
+  group: p44-original-vdevice-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  actual-original-apk-host-controlled-profile:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p44-virtual-device-profile-binder-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p43-original-apk-embedded-isolated-service-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Private repo and fail-closed P44 canonical profile JVM tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GH_REPO" --jq .visibility)" = private
+          mkdir -p .p44test
+          javac --release 8 -d .p44test \
+            host_candidate/p43_original_service/android/com/dsh/android/p43/P44VirtualDeviceProfile.java \
+            host_candidate/p44_virtual_device_profile/test/com/dsh/android/p43/P44VirtualDeviceProfileTest.java
+          java -cp .p44test com.dsh.android.p43.P44VirtualDeviceProfileTest | tee .p44-result.txt
+          grep -Eq '^P44_VIRTUAL_DEVICE_PROFILE_JVM_TESTS=PASS assertions=[0-9]+$' .p44-result.txt
+          echo 'P44_PROFILE_VALIDATION_TESTS=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Install immutable original DSH APK build prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          sudo apt-get -qq update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -qq install -y apktool
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager"; then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 | head -n1 || true)"
+          fi
+          test -n "$manager"
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Build exact v138 original DSH app + nonexported isolated Worker + virtual profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash host_candidate/p43_original_service/build_embedded_emulator_apk.sh
+          echo 'P44_ORIGINAL_APK_PROFILE_CLASS_IN_CLASSES3=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+      - name: Emulator hardware acceleration when available
+        shell: bash
+        run: if test -c /dev/kvm; then sudo chmod 666 /dev/kvm; fi
+      - name: Real Android35 same-app original DSH Binder virtual profile acceptance
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: bash host_candidate/p44_virtual_device_profile/run_p44_original_emulator.sh
+      - name: Always erase temporary private original APK and one-day signer
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p43tmp .p44test .p44-result.txt
+          echo 'P44_RELEASE_OR_TEST_APK_UPLOADED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P44_DEVICE_PROFILE_CHANGES_SYSTEM=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P44_ORIGINAL_ENGINE_NODE_WIRED_TO_WORKER=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P44_REAL_VIRTUAL_MACHINE=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P44_OWNER_APP_OR_DATA_CHANGED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P44_V139_RELEASE=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

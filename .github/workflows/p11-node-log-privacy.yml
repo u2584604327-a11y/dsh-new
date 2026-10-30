@@ -1,0 +1,68 @@
+name: DSH P11 no raw logs in AI tools (Node model boundary)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'host_candidate/patch_logs_metadata_only.py'
+      - 'host_candidate/test_logs_metadata_only.mjs'
+      - '.github/workflows/p11-node-log-privacy.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  scoped-node-log-guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Download exact private v138 from known release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input out/plugin/lib
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk --dir input
+          printf '%s  %s\n' 3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk | sha256sum -c -
+      - name: Prove original nested resource preimage and apply P7 + P11
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import zipfile,pathlib,hashlib
+          with zipfile.ZipFile('input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk') as z:
+            if z.testzip():raise ValueError('APK_CRC_FAIL')
+            data=z.read('assets/logs-tool.zip')
+          if hashlib.sha256(data).hexdigest()!='3e6f281da126b2483d812c11297dd27d41787c29bbe3583221697749c39ff01a':
+            raise ValueError('V138_NATIVE_NODE_LOG_PLUGIN_PREIMAGE_CHANGED')
+          pathlib.Path('out/original-logs-tool.zip').write_bytes(data)
+          PY
+          python host_candidate/patch_logs_metadata_only.py out/original-logs-tool.zip \
+            --output out/p11-logs-tool.zip --extract-js out/plugin/lib/index.js
+          python3 - <<'PY'
+          import zipfile,pathlib
+          with zipfile.ZipFile('out/p11-logs-tool.zip') as p:
+            if p.testzip():raise ValueError('PATCHED_PLUGIN_CRC_FAIL')
+            pathlib.Path('out/plugin/package.json').write_bytes(p.read('package.json'))
+          PY
+      - name: JavaScript syntax and actual mock native mailbox canary tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check out/plugin/lib/index.js
+          node host_candidate/test_logs_metadata_only.mjs out/plugin/lib/index.js
+          echo 'P11_RAW_READ_CRASH_EXPORT_DENY_BEFORE_MAILBOX=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P11_SUMMARY_NUMERIC_WHITELIST=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P11_GENERIC_SAME_UID_NODE_FILESYSTEM=NOT_BLOCKED' >> "$GITHUB_STEP_SUMMARY"
+      - name: No sensitive artifact or signing output
+        if: always()
+        run: |
+          echo 'No unredacted logs, APK/DEX, private keys or binary artifacts uploaded.' >> "$GITHUB_STEP_SUMMARY"

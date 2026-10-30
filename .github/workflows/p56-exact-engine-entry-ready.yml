@@ -1,0 +1,70 @@
+name: DSH P56 exact original startup asset and READY slice
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p56_entry_ready/**'
+      - 'host_candidate/P56_EXACT_ENGINE_ENTRY_READY_GATE.md'
+      - '.github/workflows/p56-exact-engine-entry-ready.yml'
+permissions:
+  contents: read
+concurrency:
+  group: p56-private-engine-slice-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  exact-original-engine-ready-slice:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p56-exact-engine-entry-and-ready-slice-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p55-original-engine-startup-import-closure-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Exact private repo and synthetic structural regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          python -m py_compile host_candidate/p56_entry_ready/*.py
+          python host_candidate/p56_entry_ready/test_p56_entry_ready.py > .p56_synthetic.log
+          grep -Eq '^P56_STATIC_SLICE_SYNTHETIC_TESTS=PASS assertions=[0-9]+$' .p56_synthetic.log
+          echo 'P56_SYNTHETIC_GATE=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Original signed-v138 engine start and READY static source-only slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p56_private
+          gh release download dsh-baseline-v135dsh-baseline-v135 \
+            --repo "$GH_REPO" --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --dir .p56_private
+          original=.p56_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+          printf '%s  %s\n' \
+            3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            "$original" | sha256sum -c - >/dev/null
+          python host_candidate/p56_entry_ready/p56_engine_entry_ready_slice.py "$original" > .p56_private/aggregate_only.log
+          grep -Fxq 'P56_PINNED_ORIGINAL_SHA_AND_P54_FULL_TREE=PASS' .p56_private/aggregate_only.log
+          grep -Fxq 'P56_P35_EXACT_SPAWN_LIFECYCLE=PASS' .p56_private/aggregate_only.log
+          grep -Fxq 'P56_ORIGINAL_PRODUCTION_STARTUP_ENTRY_PROVEN=NO' .p56_private/aggregate_only.log
+          grep -Fxq 'P56_ORIGINAL_READY_PROTOCOL_PROVEN=NO' .p56_private/aggregate_only.log
+          grep -Fxq 'P56_ORIGINAL_PRODUCTION_NODE_EXECUTED=NO' .p56_private/aggregate_only.log
+          grep -Fxq 'P56_FIXED_SIGNED_V139=BLOCKED' .p56_private/aggregate_only.log
+          grep -E '^P56_(APK_JS_ASSETS|APK_ZIP_ASSETS|START_FAMILY_METHODS|PRIMARY_EXACT_ASSET_LITERAL_MATCHES|FAMILY_EXACT_ASSET_LITERAL_MATCHES|NESTED_LATCH_SIGNAL_METHOD_HINTS|NESTED_REGEX_METHOD_HINTS|PRIMARY_PROCESS_AND_READY_API_COUNTS|START_FAMILY_PROCESS_AND_READY_API_COUNTS|START_FAMILY_LITERAL_CATEGORY_COUNTS|PRIMARY_NEAR_START_LITERAL_CATEGORY_COUNTS)=' .p56_private/aggregate_only.log | tee -a "$GITHUB_STEP_SUMMARY"
+          echo 'P56_ORIGINAL_COMMAND_AND_READY_CONDITION=NOT_PROVEN' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P56_FIXED_SIGNED_V139=BLOCKED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always destroy original signed APK and temporary reports
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p56_private .p56_synthetic.log
+          echo 'P56_ORIGINAL_APK_ARTIFACT_OR_RELEASE_CREATED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P56_USER_PHONE_OR_ORIGINAL_INSTALL_CHANGED=NO' >> "$GITHUB_STEP_SUMMARY"

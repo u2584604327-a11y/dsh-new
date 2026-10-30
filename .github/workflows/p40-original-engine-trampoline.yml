@@ -1,0 +1,95 @@
+name: DSH P40 exact v138 EngineManager startup trampoline (offline only)
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p40_exact_trampoline.py'
+      - 'host_candidate/P40_EXACT_ENGINE_TRAMPOLINE_GATE.md'
+      - '.github/workflows/p40-original-engine-trampoline.yml'
+permissions:
+  contents: read
+concurrency:
+  group: p40-original-exact-trampoline-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  reassemble-exact-v138-offline:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p40-exact-engine-spawn-trampoline-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p39-exact-host-process-seam-audit-20261029'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify private repo, parse P40 source and install offline rebuild tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GH_REPO" --jq .visibility)" = private
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          python -m py_compile host_candidate/p40_exact_trampoline.py
+          sudo apt-get -qq update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -qq install -y apktool
+          apktool --version
+      - name: Read exact source APK in CI and pin signed baseline SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p40tmp
+          gh release download dsh-baseline-v135dsh-baseline-v135 \
+            --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --dir .p40tmp
+          file=.p40tmp/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+          test "$(stat -c %s "$file")" -eq 147341486
+          expected="$(PYTHONPATH=host_candidate python -c 'from p35_original_engine_spawn_contract import EXPECTED;print(EXPECTED)')"
+          test "${#expected}" -eq 64
+          printf '%s  %s\n' "$expected" "$file" | sha256sum -c -
+          echo 'P40_EXACT_SIGNED_ORIGINAL_APK_SHA256=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Decode smali only, without rewriting original APK resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          apktool d -f -r \
+            .p40tmp/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            -o .p40tmp/decoded
+          test -s '.p40tmp/decoded/smali/com/dsh/android/EngineManager$start$2.smali'
+          test -s .p40tmp/decoded/smali/com/dsh/android/EngineManager.smali
+      - name: Replace only exact Node launch with a behavior-preserving trampoline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python host_candidate/p40_exact_trampoline.py patch \
+            .p40tmp/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            .p40tmp/decoded \
+            --report .p40tmp/source-rewrite.json
+          echo 'P40_NARROW_SMALI_CALLSITE=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+      - name: Build unsigned offline APK; verify real rewritten DEX
+        shell: bash
+        run: |
+          set -euo pipefail
+          apktool b .p40tmp/decoded -o .p40tmp/rebuilt-UNSIGNED-DO-NOT-INSTALL.apk
+          test -s .p40tmp/rebuilt-UNSIGNED-DO-NOT-INSTALL.apk
+          unzip -tqq .p40tmp/rebuilt-UNSIGNED-DO-NOT-INSTALL.apk
+          python host_candidate/p40_exact_trampoline.py verify \
+            .p40tmp/rebuilt-UNSIGNED-DO-NOT-INSTALL.apk
+          echo 'P40_OFFLINE_UNSIGNED_APK_DEX_TRAMPOLINE=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P40_ORIGINAL_ENGINE_ISOLATED_NODE=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P40_ANDROID_ART_RUNTIME_BOOT=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always destroy source APK, decoded files and candidate; never publish
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p40tmp
+          echo 'P40_BINARY_ARTIFACTS_UPLOADED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P40_ORIGINAL_FIXED_SIGNATURE_USED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P40_ORIGINAL_USER_DSH_AND_DATA_CHANGED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P40_V139_RELEASE=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

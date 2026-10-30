@@ -1,0 +1,95 @@
+name: DSH P49 exact original ARM64 Node inside original DSH offline APK
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p49_original_node_stage.py'
+      - 'host_candidate/p43_original_service/build_embedded_emulator_apk.sh'
+      - 'host_candidate/P49_EXACT_ARM64_ORIGINAL_DSH_STAGE_GATE.md'
+      - '.github/workflows/p49-original-arm64-node-archive-stage.yml'
+permissions:
+  contents: read
+concurrency:
+  group: p49-original-node-exact-stage-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  original-v138-immutable-node-stage-static:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p49-exact-arm64-node-original-apk-stage-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p48-original-host-process-proxy-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 48
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      P47_NO_HOST_FALLBACK: '1'
+      P49_NODE_STAGE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Private repository preflight and exact Node staging source validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GH_REPO" --jq .visibility)" = private
+          test "$P47_NO_HOST_FALLBACK" = 1
+          test "$P49_NODE_STAGE" = 1
+          bash -n host_candidate/p43_original_service/build_embedded_emulator_apk.sh
+          python -m py_compile host_candidate/p49_original_node_stage.py
+          python -m py_compile host_candidate/p47_no_fallback/p47_gate.py
+          ! grep -Ei 'Runtime\.getRuntime\(\)\.exec\(|\bsu\b|magisk|kernelsu' \
+            host_candidate/p47_no_fallback/android/com/dsh/android/p47/P47LaunchGate.java
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          sudo apt-get -qq update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -qq install -y apktool binutils
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager";then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 | head -n1 || true)"
+          fi
+          test -n "$manager"
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Derive 11 source-verified ARM64 ELF from original exact v138 and embed in original APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash host_candidate/p43_original_service/build_embedded_emulator_apk.sh \
+            > .p49-private-build.log 2>&1 || {
+              echo 'P49_PRIVATE_BUILD_FAILED=YES'
+              grep -E 'P49_|P47_BLOCKED|RuntimeError|ValueError|ERROR|Traceback|FileNotFoundError|CalledProcessError|not found|No such file|INVALID|DRIFT' \
+                .p49-private-build.log | tail -n 30 || true
+              echo 'P49_LAST_BUILD_LINES_FOR_PRIVATE_TRIAGE_START'
+              tail -n 28 .p49-private-build.log | sed -E 's/(SECRET|TOKEN|PASSWORD|KEY)=([^ ]+)/\1=[REDACTED]/Ig'
+              echo 'P49_LAST_BUILD_LINES_END'
+              exit 1
+            }
+          grep -Fq 'P49_EXACT_ORIGINAL_NODE_ELF_SHA256=PASS' .p49-private-build.log
+          grep -Fq 'P49_ORIGINAL_TEN_ELF_DEPENDENCIES=PASS' .p49-private-build.log
+          grep -Fq 'P49_REAL_ORIGINAL_DSH_ASSETS_AND_LIBRARIES_BYTE_PRESERVED=PASS' .p49-private-build.log
+          grep -Fq 'P49_11_ADDITIONAL_ARM64_ELF_STORED_16K_AND_SHA=PASS' .p49-private-build.log
+          grep -Fq 'P49_EXTRA_APK_MEMBERS_ALLOWLIST=PASS' .p49-private-build.log
+          grep -Fq 'P47_REBUILT_ORIGINAL_PRIMARY_ENGINE_BRIDGE_NO_HOST_START=PASS' .p49-private-build.log
+          echo 'P49_EXACT_NODE_LIBS_IN_ORIGINAL_DSH_APK=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P49_ORIGINAL_ASSETS_AND_ORIGINAL_LIBS_PRESERVED=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P49_SHA256_AND_16K_NATIVE_STORED_ENTRIES=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P49_MAIN_ENGINE_HOST_FALLBACK=BLOCKED_BY_P47' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P49_ARM64_NODE_EXECUTED_IN_ORIGINAL_DSH=NO' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always wipe private source and derived APK, exact ELF, runtime lock, and signing key
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p43tmp .p49-private-build.log
+          echo 'P49_ANY_BINARY_ARTIFACT_PUBLISHED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P49_TEST_APK_INSTALLED_ON_OWNER_PHONE=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P49_PRODUCTION_FIXED_SIGNING_KEY_USED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P49_ANDROID16_ARM64_RUNTIME_AND_NODE_ENV=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P49_FULL_CHAT_BROWSER_FILES_PARITY=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P49_V139_RELEASE=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

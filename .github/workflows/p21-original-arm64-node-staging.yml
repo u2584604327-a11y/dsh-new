@@ -1,0 +1,124 @@
+name: DSH P21 original ARM64 Node package-only and Android35 blocker test
+on:
+  pull_request:
+    paths:
+      - 'host_candidate/p21_real_arm64_loader_pack.py'
+      - 'host_candidate/p21_align_unsigned_native_apk.py'
+      - 'host_candidate/p21_original_node/**'
+      - '.github/workflows/p21-original-arm64-node-staging.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: dsh-p21-arm64-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  original-arm64-node-package-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Download exact signed original v138 to temporary runner only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input out/p21
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk --dir input
+          printf '%s  %s\n' 3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk | sha256sum -c -
+      - name: Exact original ELF recursive dependency extraction and fail-close SDK35 check
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile host_candidate/p21_real_arm64_loader_pack.py
+          python3 host_candidate/p21_real_arm64_loader_pack.py \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --out-native-dir out/p21/native/lib/arm64-v8a --report out/p21/closure.json
+          python3 - <<'PY'
+          import json,pathlib
+          r=json.loads(pathlib.Path('out/p21/closure.json').read_text())
+          assert r['native_lib_file_count']==11
+          assert len(r['library_closure'])==10
+          assert r['all_original_elf_pt_load_alignments_16k'] is True
+          blockers=set(r['api35_extractNativeLibs_unextractable_sonames'])
+          expected={'libcrypto.so.3','libssl.so.3','libz.so.1','libicui18n.so.78',
+                    'libicuuc.so.78','libicudata.so.78'}
+          assert blockers==expected,(blockers,expected)
+          assert r['actual_android_isolated_node_execution']=='NOT_TESTED'
+          print('P21_10_RUNTIME_LIBS_ELF_STATIC_CLOSURE=PASS')
+          print('P21_SDK35_VERSIONED_LIB_EXTRACT_BLOCKERS=6')
+          PY
+          echo 'P21_EXACT_V138_NODE_AND_10_LIBRARIES=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P21_SDK35_VERSIONED_LIB_EXTRACT=BLOCKED_6' >> "$GITHUB_STEP_SUMMARY"
+      - name: Compile actual-Node isolatedProcess candidate without installing/signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager";then
+            manager="$(find "$SDK/cmdline-tools" -type f -name sdkmanager -perm /111 2>/dev/null | head -n1 || true)"
+          fi
+          test -n "$manager"
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+          mkdir -p out/p21/classes out/p21/dex
+          javac --release 8 -cp "$SDK/platforms/android-35/android.jar" \
+            -d out/p21/classes \
+            host_candidate/p21_original_node/android/com/dsh/p21/probe/P21ProbeActivity.java \
+            host_candidate/p21_original_node/android/com/dsh/p21/probe/P21RealNodeService.java
+          jar cf out/p21/worker.jar -C out/p21/classes .
+          "$SDK/build-tools/35.0.0/d8" --min-api 34 \
+            --lib "$SDK/platforms/android-35/android.jar" \
+            --output out/p21/dex out/p21/worker.jar
+          "$SDK/build-tools/35.0.0/aapt" package -f \
+            -M host_candidate/p21_original_node/android/AndroidManifest.xml \
+            -I "$SDK/platforms/android-35/android.jar" \
+            -F out/p21/probe-unsigned.apk
+          (cd out/p21/dex && zip -q -j ../probe-unsigned.apk classes.dex)
+          (cd out/p21/native && zip -q -0 -r ../probe-unsigned.apk lib)
+          # Align ALL native ELF entries, including the six version-suffixed
+          # DT_NEEDED libraries that API35 extractNativeLibs does not copy.
+          python3 host_candidate/p21_align_unsigned_native_apk.py \
+            out/p21/probe-unsigned.apk \
+            --out out/p21/probe-aligned-unsigned.apk \
+            --report out/p21/zip-alignment.json
+          "$SDK/build-tools/35.0.0/zipalign" -c -P 16 4 out/p21/probe-aligned-unsigned.apk
+          python3 - <<'PY'
+          import json,pathlib
+          result=json.loads(pathlib.Path('out/p21/zip-alignment.json').read_text())
+          assert result['P21_ZIP_NATIVE_LIB_ENTRIES']==11
+          assert result['P21_VERSIONED_LIBS_ALIGNED_16384']==6
+          assert result['P21_NODE_REAL_EXECUTION']=='NOT_TESTED'
+          print('P21_ALL_11_APK_NATIVE_ELF_ZIP_ENTRIES_ALIGNED_16K=PASS')
+          PY
+          unzip -p out/p21/probe-aligned-unsigned.apk \
+            lib/arm64-v8a/libdshnode_p21_exec.so | sha256sum \
+              | grep -Fq 'a0d21a1589312919114b24a5cc520c30ab7f26f9985b3f0c643c153172ebd1e6'
+          test "$(unzip -Z1 out/p21/probe-aligned-unsigned.apk \
+            | grep -c '^lib/arm64-v8a/lib')" -eq 11
+          grep -Fq 'android:isolatedProcess="true"' host_candidate/p21_original_node/android/AndroidManifest.xml
+          if grep -Fq '<uses-permission' host_candidate/p21_original_node/android/AndroidManifest.xml; then
+            echo '::error::Forbidden native permission';exit 1
+          fi
+          echo 'P21_ANDROID35_STANDALONE_JAVA_COMPILED=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P21_UNSIGNED_ARM64_ABI_PACKAGE=PASS_STATIC_ONLY' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P21_UNCOMPRESSED_16K_ALIGNED_VERSIONED_LIBS=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P21_APK_ZIP_RUNTIME_LIB_SEARCH=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Destroy private input and executable test package
+        if: always()
+        shell: bash
+        run: |
+          rm -rf input out
+          echo 'P21_SIGNED_OR_RELEASED_TEST_APK=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P21_REAL_ARM64_ELF_STARTED_IN_ISOLATED_UID=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P21_USER_PHONE_AND_PRODUCTION=UNCHANGED' >> "$GITHUB_STEP_SUMMARY"

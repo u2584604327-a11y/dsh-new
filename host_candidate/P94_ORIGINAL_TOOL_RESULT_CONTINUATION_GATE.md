@@ -1,0 +1,9 @@
+# P94: tool result one-shot continuation guard for DSH through OmniGate
+
+Prerequisites: P86 already proved synthetic original P6 Node sender -> an Android35 disposable sidecar WebView -> P85 terminal file -> Node await resolution; it explicitly did NOT connect the real DSH original `EngineManager`, model dispatcher or real Bilibili account. P89 assembles streamed OpenAI `tool_calls` but does not execute them.
+
+This phase supplies `P94ToolResultRelay` (pure Node20 module). It is a **result handoff guard** rather than a tool executor: exact model turn+generation and `tool_call_id`+native broker request ID must match; a verified terminal native callback produces one OpenAI-format `role=tool` result; a denied comment produces an error tool_result so the model may continue without making an unauthorized external action. Unknown side-effect outcomes are blocked rather than retried. Single-flight exactly-once local dispatch attempt; loss of transport acknowledgment becomes ACK_UNKNOWN and never blindly resends. A model continuation is marked only after trusted observation of a newer model step under the same original turn.
+
+The injected callbacks `isCurrentOriginalTurn` and `dispatchOriginalToolResult` are placeholders for verified original model engine adapters, NOT the production hook. This module cannot protect against a malicious or buggy caller claiming a trusted terminal; the trust boundary and durable P85 journal must be enforced by the original Android/Node broker when integrated.
+
+**Do not claim production tool results or real browser side effects now.** Release blocked until exact original DSH EngineManager startup, native broker provenance, tool result durability/ack, live DSH→OmniGate→model continuation and permission gates are verified. No live login, Bilibili comments, token propagation, signer, APK or port changes.

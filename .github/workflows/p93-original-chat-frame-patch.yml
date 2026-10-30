@@ -1,0 +1,66 @@
+name: P93 streaming message state and main-thread patch compilation
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p93_chat_patch/**'
+      - 'host_candidate/P93_ORIGINAL_MESSAGE_STREAM_PATCH_GATE.md'
+      - '.github/workflows/p93-original-chat-frame-patch.yml'
+permissions:
+  contents: read
+jobs:
+  stream-state-to-existing-chat-contract:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p93-original-chat-message-patch-dispatch-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p92-dsh-only-omnigate-route-and-receipt-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - name: Check private source and deterministic stream message states
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = 'u2584604327-a11y/dshe'
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          mkdir -p .p93temp
+          javac --release 8 -d .p93temp \
+            host_candidate/p93_chat_patch/src/com/dsh/android/p93/P93TurnMessageState.java \
+            host_candidate/p93_chat_patch/test/com/dsh/android/p93/P93TurnMessageStateTest.java
+          java -cp .p93temp com.dsh.android.p93.P93TurnMessageStateTest | tee .p93temp/test.log
+          for expected in \
+            P93_FIRST_BODY_FRAME_BEFORE_DONE=PASS \
+            P93_THINKING_SEPARATE_TOOL_FRAGMENTS_NO_TEXT_POLLUTION=PASS \
+            P93_EOF_NOT_COMPLETE_AND_MONOTONIC_TURN_REVISIONS=PASS \
+            P93_CONTENT_CAP_AND_LATE_FRAME_REJECTION=PASS; do
+            grep -Fxq "$expected" .p93temp/test.log
+          done
+          echo 'P93_VERSIONED_STREAM_FRAME_REDUCER_JVM=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Compile Android main-thread adapter against SDK only
+        shell: bash
+        run: |
+          set -euo pipefail
+          jar="$(find "$ANDROID_HOME/platforms" -maxdepth 2 -name android.jar | sort -V | tail -n1)"
+          test -f "$jar"
+          javac --release 8 -cp "$jar" -d .p93temp \
+            host_candidate/p93_chat_patch/src/com/dsh/android/p93/P93TurnMessageState.java \
+            host_candidate/p93_chat_patch/android/com/dsh/android/p93/P93MainThreadPatchDispatcher.java
+          ! grep -Fq 'setContentView(' host_candidate/p93_chat_patch/android/com/dsh/android/p93/P93MainThreadPatchDispatcher.java
+          echo 'P93_ANDROID_MAIN_THREAD_EXISTING_STORE_ADAPTER_COMPILE=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep original runtime untouched
+        if: always()
+        run: |
+          rm -rf .p93temp
+          {
+            echo 'P93_P87_P89_NATIVE_REAL_STREAM_CONSUMER_TO_THIS_REDUCER=NOT_WIRED'
+            echo 'P93_ORIGINAL_DSH_CHAT_STORE_PATCH_ADAPTER=NOT_WIRED'
+            echo 'P93_REAL_OMNIGATE_TO_DSH_UI=NOT_VERIFIED'
+            echo 'P93_NO_REPLACEMENT_ACTIVITY_NO_SIGNER_NO_DEPLOY=YES'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,46 @@
+name: DSH native diagnostics export reply site audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'host_candidate/audit_native_export_reply.py'
+      - '.github/workflows/native-export-reply.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-export-reply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Download exactly matching private v138
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input out
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk --dir input
+          printf '%s  %s\n' 3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk | sha256sum -c -
+      - name: Inspect original diagnostic export JSON write site
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -r host_candidate/requirements.txt
+          python host_candidate/audit_native_export_reply.py \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --report out/native-export-site.json
+          echo 'NATIVE_EXPORT_REPLY_SITE_REVIEW=READ_ONLY_PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'NO_NATIVE_CODE_MODIFIED=YES' >> "$GITHUB_STEP_SUMMARY"

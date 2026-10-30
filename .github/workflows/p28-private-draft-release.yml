@@ -1,0 +1,91 @@
+name: DSH P28 private Draft Release exact Node offline test delivery
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p28-private-draft-release.yml'
+      - 'host_candidate/p28_device_probe/**'
+permissions:
+  contents: write
+concurrency:
+  group: dsh-p28-private-draft-release-singleton
+  cancel-in-progress: false
+jobs:
+  owner-authorized-draft-release:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p28-private-arm64-original-node-device-probe-20261029' &&
+      github.event.pull_request.base.ref == 'dsh/p27-arm64-android-executor-preflight-20261029'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      P28_TAG: p28-private-device-probe-20261029
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify private repo, single private Draft target and no public releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          visibility="$(gh api "repos/$GH_REPO" --jq '.visibility')"
+          if test "$visibility" != "private";then
+            echo "::error::P28 private test must never be distributed through a public repository";exit 1
+          fi
+          if gh release view "$P28_TAG" --repo "$GH_REPO" >/dev/null 2>&1;then
+            echo "::error::Existing P28 release must be reviewed before replacement";exit 1
+          fi
+          if gh api "repos/$GH_REPO/git/ref/tags/$P28_TAG" >/dev/null 2>&1;then
+            echo "::error::P28 tag already exists; no implicit overwrite";exit 1
+          fi
+          echo 'P28_PRIVATE_REPO_VISIBILITY=VERIFIED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Build exact original ARM64 Node device probe with immutable SHA and no permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            host_candidate/p21_real_arm64_loader_pack.py \
+            host_candidate/p25_original_node_alias_stager.py \
+            host_candidate/p28_device_probe/emit_runtime_lock.py
+          bash host_candidate/p28_device_probe/build_private_apk.sh
+      - name: Create strictly private DRAFT RELEASE, never publish
+        shell: bash
+        env:
+          SOURCE_COMMIT: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test -s delivery/P28-Private-ARM64-Node-Isolation-Probe.apk
+          test -s delivery/SHA256SUMS.txt
+          test -s delivery/README-P28-PRIVATE.txt
+          gh release create "$P28_TAG" \
+            delivery/P28-Private-ARM64-Node-Isolation-Probe.apk \
+            delivery/SHA256SUMS.txt \
+            delivery/README-P28-PRIVATE.txt \
+            --repo "$GH_REPO" \
+            --target "$SOURCE_COMMIT" \
+            --draft \
+            --title 'PRIVATE DSH P28 ARM64 original Node probe - DO NOT PUBLISH' \
+            --notes 'PRIVATE OWNER-AUTHORIZED TEST ONLY. Contains original v138 Node ELF; never publish. Separate package com.dsh.p28.nodeprobe with temporary signing and no Android permissions. Android 14+ ARM64 only, fixed --version via user tap. Actual on-device execution and Node network/FS isolation NOT TESTED. Remove this draft release and its tag after the owner finishes testing. P28 is NOT a v139 release.'
+          draft="$(gh release view "$P28_TAG" --repo "$GH_REPO" --json isDraft --jq '.isDraft')"
+          if test "$draft" != "true";then
+            echo "::error::P28 release is not draft; require manual incident handling";exit 1
+          fi
+          gh release view "$P28_TAG" --repo "$GH_REPO" \
+            --json assets --jq '[.assets[].name]|sort|join(",")' \
+            > out/p28/release-asset-list.txt
+          grep -Fq 'P28-Private-ARM64-Node-Isolation-Probe.apk' out/p28/release-asset-list.txt
+          grep -Fq 'SHA256SUMS.txt' out/p28/release-asset-list.txt
+          grep -Fq 'README-P28-PRIVATE.txt' out/p28/release-asset-list.txt
+          echo 'P28_OWNER_AUTHORIZED_PRIVATE_DRAFT_RELEASE=CREATED_VERIFIED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P28_PRIVATE_DRAFT_RELEASE_TAG=p28-private-device-probe-20261029' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P28_ORIGINAL_DSH_V139_RELEASE=BLOCKED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always clean private input, app and temp signing key from runner
+        if: always()
+        shell: bash
+        run: |
+          rm -rf input out delivery
+          echo 'P28_ORIGINAL_DSH_SIGNER_USED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P28_NO_MAIN_MERGE_OR_PRODUCTION_CHANGED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P28_NODE_REAL_ARM64_PHONE_EXECUTION=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"

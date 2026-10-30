@@ -1,0 +1,113 @@
+name: DSH v139 P6 source and D8 evidence audit
+
+on:
+  release:
+    types: [published, edited]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dsh-private-source-p6
+  cancel-in-progress: false
+
+jobs:
+  p6-source-gates:
+    if: github.event_name == 'workflow_dispatch' || github.event.release.tag_name == 'dsh-source-v139-p6'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      P6_TAG: dsh-source-v139-p6
+      P6_FILE: DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip
+      P6_SHA: 3af586c2c83d1aea67d119357672559eb09371c77ef4e06900bb697c06d11fd5
+    steps:
+      - name: Setup Node 22 and JDK 17
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Fetch and verify P6 source bundle from this PRIVATE repo Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input work
+          gh release download "$P6_TAG" --repo "$GH_REPO" --pattern "$P6_FILE" --dir input
+          printf '%s  %s\n' "$P6_SHA" "input/$P6_FILE" | sha256sum -c -
+          unzip -tqq "input/$P6_FILE"
+          python3 - <<'PY'
+          import zipfile, pathlib, stat
+          z = zipfile.ZipFile('input/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip')
+          total = 0
+          for x in z.infolist():
+              p = pathlib.PurePosixPath(x.filename)
+              if p.is_absolute() or '..' in p.parts or '\\' in x.filename:
+                  raise SystemExit('Unsafe path in P6 bundle')
+              if stat.S_ISLNK(x.external_attr >> 16):
+                  raise SystemExit('Symlink prohibited in P6 bundle')
+              total += x.file_size
+              if total > 20_000_000:
+                  raise SystemExit('Source bundle expanded size exceeds limit')
+          z.extractall('work')
+          print('SAFE_BOUNDED_P6_EXTRACTION=PASS')
+          PY
+          echo "P6_HASH_CRC_AND_BOUNDARIES=PASS" >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify P6 JavaScript guard and browser assets (synthetic tests only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd work
+          bash REPRODUCE.sh
+          echo "P6_NODE_AND_BROWSER_REGRESSION=PASS" >> "$GITHUB_STEP_SUMMARY"
+      - name: Extract verified embedded P5 Java source and run JVM suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p p5
+          cd p5
+          unzip -q ../work/upstream/DSH_V139_P5_AUDIT_FAIL_CLOSED_SOURCE_ONLY.zip
+          bash REPRODUCE.sh
+          echo "P5_SYNTHETIC_JVM=PASS" >> "$GITHUB_STEP_SUMMARY"
+      - name: Probe Android SDK build-tools without signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="$(printenv ANDROID_HOME || printenv ANDROID_SDK_ROOT || echo /usr/local/lib/android/sdk)"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          if ! test -x "$SDK/build-tools/35.0.0/d8"; then
+            SDKMANAGER="$(command -v sdkmanager || true)"
+            if test -z "$SDKMANAGER"; then
+              SDKMANAGER="$(find "$SDK/cmdline-tools" -type f -name sdkmanager -perm /111 2>/dev/null | head -n1 || true)"
+            fi
+            test -n "$SDKMANAGER"
+            (yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses > /dev/null) || true
+            "$SDKMANAGER" --sdk_root="$SDK" "build-tools;35.0.0" "platforms;android-35"
+          fi
+          test -x "$SDK/build-tools/35.0.0/d8"
+      - name: Convert P5 JVM core into DEX (not Android host)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          jar cf out/p5-jvm-only.jar -C p5/out/classes .
+          "$ANDROID_HOME/build-tools/35.0.0/d8" --min-api 26 --output out out/p5-jvm-only.jar
+          test -s out/classes.dex
+          echo "P5_CORE_D8=PASS" >> "$GITHUB_STEP_SUMMARY"
+          echo "HOST_INTEGRATED=NOT_VERIFIED" >> "$GITHUB_STEP_SUMMARY"
+          echo "NATIVE_NODE_EGRESS_GATE=NOT_VERIFIED" >> "$GITHUB_STEP_SUMMARY"
+          echo "APK_BUILT=NO" >> "$GITHUB_STEP_SUMMARY"
+          echo "SIGNING=NOT_PERFORMED" >> "$GITHUB_STEP_SUMMARY"
+          echo "ART_VERIFIED=NOT_VERIFIED" >> "$GITHUB_STEP_SUMMARY"
+          echo "REAL_DEVICE_ACCEPTED=NOT_VERIFIED" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: State blocked gates if workflow did not finish
+        if: always()
+        shell: bash
+        run: |
+          echo "This is a PRIVATE source-only synthetic verification run." >> "$GITHUB_STEP_SUMMARY"
+          echo "No user diagnostics, APKs, credentials, or signing keys are uploaded as artifacts." >> "$GITHUB_STEP_SUMMARY"

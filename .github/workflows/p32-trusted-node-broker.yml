@@ -1,0 +1,67 @@
+name: DSH P32 trusted host Node-origin one-shot Binder broker
+on:
+  pull_request:
+    paths:
+      - 'host_candidate/p32_node_ipc/**'
+      - 'host_candidate/P32_TRUSTED_NODE_BROKER_GATE.md'
+      - '.github/workflows/p32-trusted-node-broker.yml'
+permissions:
+  contents: read
+jobs:
+  verify-one-shot-trusted-node-broker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compile Java8 scoped broker and run policy/concurrency tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          javac -version
+          mkdir -p out/p32
+          javac --release 8 -Xlint:all -Werror -d out/p32 \
+            host_candidate/p17_capability/src/com/dsh/p17/P17CapabilityGate.java \
+            host_candidate/p32_node_ipc/src/com/dsh/p32/P32NodeIpcBroker.java \
+            host_candidate/p32_node_ipc/test/com/dsh/p32/P32NodeIpcBrokerTest.java
+          timeout 45s java -ea -cp out/p32 com.dsh.p32.P32NodeIpcBrokerTest
+          echo 'P32_JDK_ONE_SHOT_REPLAY_REVOKE_EXPIRY_CONCURRENT=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Compile genuine Android Messenger adapter against Android API35
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager";then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 2>/dev/null | head -n1 || true)"
+          fi
+          test -n "$manager"
+          "$manager" --sdk_root="$SDK" 'platforms;android-35'
+          mkdir -p out/p32/android
+          javac --release 8 -cp "$SDK/platforms/android-35/android.jar" \
+            -d out/p32/android \
+            host_candidate/p17_capability/src/com/dsh/p17/P17CapabilityGate.java \
+            host_candidate/p32_node_ipc/src/com/dsh/p32/P32NodeIpcBroker.java \
+            host_candidate/p32_node_ipc/android/com/dsh/p32/P32AndroidBinderPort.java
+          echo 'P32_ANDROID_MESSENGER_SOURCE_COMPILES_API35=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Audit no unbounded host broker I/O, no release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -REn 'Runtime\.getRuntime\(\)\.exec|HttpURLConnection|Socket\(|openFileOutput|ProcessBuilder' \
+                host_candidate/p32_node_ipc/src host_candidate/p32_node_ipc/android;then
+            echo 'P32_UNTRUSTED_BROKER_DIRECT_IO=FAIL';exit 1
+          fi
+          grep -Fq 'frameworkUid=request.sendingUid' \
+            host_candidate/p32_node_ipc/android/com/dsh/p32/P32AndroidBinderPort.java
+          grep -Fq 'onTrustedUiApproveOnceClick' \
+            host_candidate/p32_node_ipc/android/com/dsh/p32/P32AndroidBinderPort.java
+          echo 'P32_NO_PRIVILEGED_FILE_NETWORK_OR_SHELL_BROKER=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P32_MAIN_ACTIVITY_IN_REAL_DSH=NOT_CONNECTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P32_REAL_NODE_STDOUT_TO_HOST_BINDER=NOT_CONNECTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P32_V139_SIGNED_RELEASE=BLOCKED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always delete ephemeral bytecode
+        if: always()
+        shell: bash
+        run: rm -rf out

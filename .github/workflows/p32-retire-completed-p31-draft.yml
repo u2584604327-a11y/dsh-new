@@ -1,0 +1,52 @@
+name: DSH P32 retire finished P31 private original Node test Draft
+on:
+  pull_request:
+    types: [synchronize]
+    paths:
+      - '.github/workflows/p32-retire-completed-p31-draft.yml'
+permissions:
+  contents: write
+jobs:
+  delete-exact-completed-p31-private-draft:
+    if: >-
+      github.event.pull_request.number == 16 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p32-trusted-node-binder-broker-20261029' &&
+      github.event.pull_request.base.ref == 'dsh/p31-node-positive-fs-control-20261029'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Match exact owner-approved historical P31 Draft and only its three test assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GH_REPO" --jq .visibility)" = private
+          # The owner completed P31 on their device and explicitly authorized
+          # retiring prior private APK test Drafts after use.
+          if ! gh api "repos/$GH_REPO/releases/427841092" > /tmp/p31.json 2>/dev/null;then
+            echo 'P31_COMPLETED_DRAFT=ALREADY_ABSENT' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          python3 - <<'PY'
+          import json
+          x=json.load(open("/tmp/p31.json"))
+          assert x["id"]==427841092
+          assert x["draft"] is True
+          assert x.get("published_at") is None
+          assert x["tag_name"]=="p31-private-positive-fs-control-20261029"
+          expected=sorted(["P31-Private-ARM64-Node-Boundary-Probe.apk",
+                           "SHA256SUMS.txt","README-P31-PRIVATE.txt"])
+          assert sorted(a["name"] for a in x["assets"])==expected
+          print("P31_SOURCE_ASSET_IDENTITY_AND_PRIVATE_DRAFT=PASS")
+          PY
+          gh api -X DELETE "repos/$GH_REPO/releases/427841092"
+          if gh api "repos/$GH_REPO/releases/427841092" >/dev/null 2>&1;then
+            echo "::error::P31 private Draft not deleted";exit 1
+          fi
+          echo 'P31_OWNER_COMPLETED_PRIVATE_DRAFT_AND_ASSETS_DELETED=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P31_ANDROID36_TEST_PROVENANCE_RETAINED_IN_P32_SOURCE_REPORT=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P32_EXISTING_DSH_V138_ORIGINAL_BASELINE_AND_SIGNING=UNCHANGED' >> "$GITHUB_STEP_SUMMARY"
+          rm -f /tmp/p31.json

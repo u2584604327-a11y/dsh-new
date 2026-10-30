@@ -1,0 +1,27 @@
+# Never add original APKs, extracted private app data or signing credentials to git history.
+*.apk
+*.aab
+*.dex
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+*.env
+.env.*
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.zip
+*.tar.gz
+*.tgz
+build/
+out/
+.gradle/
+.idea/
+local.properties
+secrets/
+diagnostics/
+inputs/

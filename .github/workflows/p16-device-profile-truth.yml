@@ -1,0 +1,51 @@
+name: DSH P16 device profile consistency and authenticity caveat
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'host_candidate/audit_device_profiles_p16.mjs'
+      - '.github/workflows/p16-device-profile-truth.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  actual-profile-schema:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: SHA-pin current P6 browser source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input out
+          gh release download dsh-source-v139-p6 --repo "$GH_REPO" \
+            --pattern DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip --dir input
+          printf '%s  %s\n' 3af586c2c83d1aea67d119357672559eb09371c77ef4e06900bb697c06d11fd5 \
+            input/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip | sha256sum -c -
+          python3 - <<'PY'
+          import pathlib,zipfile,io,hashlib
+          with zipfile.ZipFile('input/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip') as z:
+            with zipfile.ZipFile(io.BytesIO(z.read('output/DSH_V139_P6_ASSET_OVERLAY_NOT_APK.zip'))) as v:
+              data=v.read('assets/browser-tool.zip')
+          assert hashlib.sha256(data).hexdigest()=='aedb0a6582619c319ff85d13d6ad6f1a060c12d896fbbf1068575356190e7f37'
+          with zipfile.ZipFile(io.BytesIO(data)) as b:
+            pathlib.Path('out/browser-tool.js').write_bytes(b.read('lib/index.js'))
+          PY
+      - name: Audit all device presets without claiming hardware spoof
+        shell: bash
+        run: |
+          set -euo pipefail
+          node host_candidate/audit_device_profiles_p16.mjs out/browser-tool.js
+          echo 'P16_DEVICE_PROFILE_SCHEMA=PASS_SOURCE' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P16_ACTUAL_REMOTE_SITE_DEVICE_FINGERPRINT=NOT_VERIFIED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P16_REAL_IOS_WINDOWS_OS=NOT_EMULATED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P16_PER_PROFILE_OS_SEPARATION=NOT_IMPLEMENTED' >> "$GITHUB_STEP_SUMMARY"

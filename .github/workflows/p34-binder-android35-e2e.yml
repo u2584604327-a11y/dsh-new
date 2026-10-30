@@ -1,0 +1,58 @@
+name: DSH P34 real Android35 P32 trusted Binder native UI e2e
+on:
+  pull_request:
+    paths:
+      - 'host_candidate/p34_binder_android/**'
+      - 'host_candidate/P34_REAL_BINDER_E2E_GATE.md'
+      - '.github/workflows/p34-binder-android35-e2e.yml'
+permissions:
+  contents: read
+jobs:
+  real-android35-native-ui-one-shot-binder:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install platform and disposable APK toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager";then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 2>/dev/null | head -n1 || true)"
+          fi
+          test -n "$manager"
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+          echo 'P34_ANDROID_SDK_API35=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Build transient genuine Android Service isolated UID and P32 trusted native broker
+        shell: bash
+        run: bash host_candidate/p34_binder_android/build_emulator_only.sh
+      - name: Enable hardware-accelerated Android emulator if available
+        shell: bash
+        run: if test -c /dev/kvm;then sudo chmod 666 /dev/kvm;fi
+      - name: Android35 REAL Binder framework UID and trusted native UI one-shot
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: bash host_candidate/p34_binder_android/run_emulator_e2e.sh
+      - name: Always delete transient synthetic test APK and ephemeral signing key
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p34tmp
+          echo 'P34_NO_ACTIONS_APK_ARTIFACT_OR_PRIVATE_RELEASE=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P34_ORIGINAL_V138_APK_NOT_FETCHED_OR_MODIFIED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P34_ANDROID35_X86_REAL_NODE_ARM64_RUNTIME=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P34_DSH_V139_SIGNED_RELEASE=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

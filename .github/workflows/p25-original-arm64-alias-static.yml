@@ -1,0 +1,116 @@
+name: DSH P25 exact original ARM64 ELF alias and native SONAME preservation audit
+on:
+  pull_request:
+    paths:
+      - 'host_candidate/p25_original_node_alias_stager.py'
+      - 'host_candidate/P25_ORIGINAL_NODE_ALIAS_GATE.md'
+      - '.github/workflows/p25-original-arm64-alias-static.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: dsh-p25-original-arm64-alias-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  pinned-original-arm64-native-dependency-alias:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download and SHA verify exact signed v138 APK (runner memory only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input out
+          gh release download dsh-baseline-v135dsh-baseline-v135 \
+            --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --dir input
+          printf '%s  %s\n' \
+            3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk | sha256sum -c -
+      - name: Derive P21 exact native ELF tree then P25 installer alias plan without mutating bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            host_candidate/p21_real_arm64_loader_pack.py \
+            host_candidate/p25_original_node_alias_stager.py
+          python3 host_candidate/p21_real_arm64_loader_pack.py \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --out-native-dir out/p21/lib/arm64-v8a \
+            --report out/p21.json
+          python3 host_candidate/p25_original_node_alias_stager.py \
+            --p21-native-dir out/p21/lib/arm64-v8a \
+            --out-native-dir out/p25/lib/arm64-v8a \
+            --report out/p25.json
+          python3 - <<'PY'
+          import json,pathlib,hashlib
+          r=json.loads(pathlib.Path('out/p25.json').read_text())
+          n=json.loads(pathlib.Path('out/p21.json').read_text())
+          assert r['dependency_library_count']==10
+          assert r['versioned_soname_count']==6
+          assert r['all_alias_filenames_end_with_so'] is True
+          assert r['all_dependency_ELF_bytes_and_internal_sonames_preserved'] is True
+          assert r['original_missing_soname_exception']==['libsqlite3.so']
+          assert r['original_libsqlite3_filename_fallback_runtime']=='NOT_TESTED'
+          assert r['original_node_ELF_unchanged'] is True
+          assert len(set(r['soname_to_installer_filename'].values()))==10
+          assert all(name.endswith('.so') for name in r['soname_to_installer_filename'].values())
+          assert len(r['preload_dependency_first_order_versioned'])==6
+          assert n['all_original_elf_pt_load_alignments_16k'] is True
+          assert r['actual_original_arm64_node_execve_in_isolated_uid']=='NOT_TESTED'
+          assert r['original_dsh_host_runtime_migrated'] is False
+          node=pathlib.Path('out/p25/lib/arm64-v8a/libdshnode_p21_exec.so')
+          assert hashlib.sha256(node.read_bytes()).hexdigest()==r['original_node_sha256']
+          print('P25_ORIGINAL_11_ARM64_ELF_UNCHANGED=PASS')
+          print('P25_VERSIONED_SONAME_ALIAS_MAP=PASS_6')
+          print('P25_MULTI_LIBRARY_ANDROID_LINKER_EXECUTION=NOT_TESTED')
+          PY
+      - name: Stage unsigned Android35 package and verify all aliased native entries
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager";then
+            manager="$(find "$SDK/cmdline-tools" -type f -name sdkmanager -perm /111 2>/dev/null | head -n1 || true)"
+          fi
+          test -n "$manager"
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+          "$SDK/build-tools/35.0.0/aapt" package -f \
+            -M host_candidate/p21_original_node/android/AndroidManifest.xml \
+            -I "$SDK/platforms/android-35/android.jar" \
+            -F out/p25-unsigned.apk
+          (cd out/p25 && zip -q -0 -r ../p25-unsigned.apk lib)
+          "$SDK/build-tools/35.0.0/zipalign" -f -P 16 4 \
+            out/p25-unsigned.apk out/p25-aligned-unsigned.apk
+          "$SDK/build-tools/35.0.0/zipalign" -c -P 16 4 out/p25-aligned-unsigned.apk
+          test "$(unzip -Z1 out/p25-aligned-unsigned.apk \
+            | grep -Ec '^lib/arm64-v8a/lib[^/]*[.]so$')" -eq 11
+          if unzip -Z1 out/p25-aligned-unsigned.apk \
+            | grep -E '^lib/arm64-v8a/.*[.]so[.][0-9]';then
+            echo "::error::Version-suffixed installer filename survives; reject";exit 1
+          fi
+          unzip -p out/p25-aligned-unsigned.apk \
+            lib/arm64-v8a/libdshnode_p21_exec.so | sha256sum | \
+            grep -Fq 'a0d21a1589312919114b24a5cc520c30ab7f26f9985b3f0c643c153172ebd1e6'
+          echo 'P25_ALL_11_REAL_ARM64_ELF_INSTALLER_NAMED=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P25_ALL_11_REAL_ARM64_ELF_16K_PACKAGE_ALIGNED=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P25_ORIGINAL_NODE_SHA256_PRESERVED=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P25_ALL_SIX_VERSIONED_SONAMES_PRESERVED=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P25_ORIGINAL_LIBSQLITE3_MISSING_SONAME=RUNTIME_COMPATIBILITY_UNVERIFIED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P25_ANDROID35_MULTILIB_LD_PRELOAD=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Destroy exact signed input, unsigned staging package and all original runtime bits
+        if: always()
+        shell: bash
+        run: |
+          rm -rf input out
+          echo 'P25_ACTUAL_ARM64_NODE_EXECVE_IN_ISOLATED_UID=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P25_ORIGINAL_DSH_SIGNER_USED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P25_USER_DEVICE_PRODUCTION_OR_INSTALLED_V138_CHANGED=NO' >> "$GITHUB_STEP_SUMMARY"

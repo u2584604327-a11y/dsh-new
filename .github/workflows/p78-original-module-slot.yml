@@ -1,0 +1,99 @@
+name: P78 original verified JS source read once in Android isolated UID
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p78_module_slot/**'
+      - 'host_candidate/p77_engine_tar_audit/**'
+      - 'host_candidate/p76_original_engine_fd/**'
+      - 'host_candidate/p43_original_service/build_embedded_emulator_apk.sh'
+      - 'host_candidate/P78_BOUNDED_ORIGINAL_JS_SOURCE_SLOT_GATE.md'
+      - '.github/workflows/p78-original-module-slot.yml'
+permissions:
+  contents: read
+jobs:
+  signed-original-module-slot:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p78-bounded-original-js-module-slot-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p77-original-engine-tar-isolated-audit-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      P47_NO_HOST_FALLBACK: '1'
+      P49_NODE_STAGE: '0'
+      P51_SIDE_BY_SIDE: '1'
+      P51_X86_SIMULATOR_ONLY: '1'
+      P72_ACCESSOR_FIXTURE_ONLY: '1'
+      P74_FIXTURE_ENGINE_BRIDGE: '1'
+      P75_RENDEZVOUS_FIXTURE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: JVM module policy negatives and prior P77 TAR regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          test "$P47_NO_HOST_FALLBACK" = 1
+          test "$P51_SIDE_BY_SIDE" = 1
+          mkdir -p .p78_jvm
+          javac --release 8 -d .p78_jvm \
+            host_candidate/p77_engine_tar_audit/src/com/dsh/android/p77/P77TarAudit.java \
+            host_candidate/p77_engine_tar_audit/test/com/dsh/android/p77/P77TarAuditTest.java \
+            host_candidate/p78_module_slot/src/com/dsh/android/p78/P78ModuleSlot.java \
+            host_candidate/p78_module_slot/test/com/dsh/android/p78/P78ModuleSlotTest.java
+          java -cp .p78_jvm com.dsh.android.p77.P77TarAuditTest > .p77_test.log
+          java -cp .p78_jvm com.dsh.android.p78.P78ModuleSlotTest > .p78_test.log
+          grep -Eq '^P77_SYNTHETIC_CANONICAL_TAR_AND_SHA=PASS assertions=[0-9]+$' .p77_test.log
+          grep -Eq '^P78_SYNTHETIC_MODULE_SLOT_SECURITY=PASS assertions=[0-9]+$' .p78_test.log
+          bash -n host_candidate/p78_module_slot/run_emulator_module.sh
+          bash -n host_candidate/p43_original_service/build_embedded_emulator_apk.sh
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          sudo apt-get -qq update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -qq install -y apktool
+          SDK="$ANDROID_HOME"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager";then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 | head -n1 || true)"
+          fi
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+          echo 'P78_MODULE_POLICY_AND_P77_TAR_JVM=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Build exact original-v138 derived separate-package test APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash host_candidate/p43_original_service/build_embedded_emulator_apk.sh > .p78_build.log 2>&1 || {
+            grep -E 'P78_|P77_|P76_|P47_|error:|Traceback' .p78_build.log | tail -n 50 || true
+            exit 1
+          }
+          grep -Fxq 'P47_REBUILT_ORIGINAL_PRIMARY_ENGINE_BRIDGE_NO_HOST_START=PASS' .p78_build.log
+          grep -Fxq 'P51_SIGNED_APK_SEPARATE_PACKAGE_NO_PERMISSIONS=PASS' .p78_build.log
+          test -s .p43tmp/P43-ORIGINAL-DSH-EPHEMERAL-EMULATOR-ONLY.apk
+          echo 'P78_EXACT_ORIGINAL_PROVENANCE_BUILD=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Enable KVM if available
+        run: if test -c /dev/kvm;then sudo chmod 666 /dev/kvm;fi
+      - name: Android35 isolated worker reads verified original JS source once
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: bash host_candidate/p78_module_slot/run_emulator_module.sh
+      - name: Always clear private source binary, ephemeral signer and logs
+        if: always()
+        run: |
+          rm -rf .p43tmp .p78_jvm .p78_test.log .p77_test.log .p78_build.log
+          echo 'P78_PRODUCTION_NODE_MODULE_LOADER_AND_READY=NOT_IMPLEMENTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P78_ORIGINAL_PHONE_AND_USER_DATA_UNCHANGED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P78_FIXED_SIGNED_V139=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

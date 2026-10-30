@@ -1,0 +1,79 @@
+name: DSH P43 real original APK non-exported isolated Service Binder emulator
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p43_original_service/**'
+      - 'host_candidate/P43_REAL_DSH_EMBEDDED_ISOLATED_SERVICE_GATE.md'
+      - '.github/workflows/p43-real-original-apk-isolated-service.yml'
+permissions:
+  contents: read
+concurrency:
+  group: p43-original-embedded-service-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  exact-original-app-with-isolated-worker:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p43-original-apk-embedded-isolated-service-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p42-original-runtime-context-contract-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Private repo and original DSH immutable source prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GH_REPO" --jq .visibility)" = private
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          python -m py_compile host_candidate/p43_original_service/inject_original_manifest.py
+          sudo apt-get -qq update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -qq install -y apktool
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager";then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 | head -n1 || true)"
+          fi
+          test -n "$manager"
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Actual original DSH v138 + P40 trampoline + P43 private service in classes3.dex
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash host_candidate/p43_original_service/build_embedded_emulator_apk.sh
+          echo 'P43_ORIGINAL_APK_WITH_REAL_ISOLATED_SERVICE=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+      - name: Emulator accelerator
+        shell: bash
+        run: if test -c /dev/kvm;then sudo chmod 666 /dev/kvm;fi
+      - name: Android35 REAL original host Application / native non-exported Binder worker
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: bash host_candidate/p43_original_service/run_original_apk_binder_emulator.sh
+      - name: Destroy all private original APK inputs, ephemeral signer and runtime logs
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p43tmp
+          echo 'P43_TEST_ONLY_EXPORTED_PROBE_NOT_SHIPPED_TO_OWNER=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P43_SIGNED_RELEASE_ASSET=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P43_ORIGINAL_DSH_USER_APP_AND_DATA_UNCHANGED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P43_PRODUCTION_NODE_ISOLATED_LAUNCH=NOT_IMPLEMENTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P43_V139_RELEASE=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,67 @@
+name: DSH P69 original browser-tool no-reply dispatch and session read-only diagnosis
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p69_browser_reply/**'
+      - 'host_candidate/P69_BROWSER_NO_REPLY_INCIDENT.md'
+      - '.github/workflows/p69-browser-no-reply-diagnose.yml'
+permissions:
+  contents: read
+jobs:
+  pinned-v138-p6-browser-triage:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p69-browser-no-reply-execution-dispatch-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p68-original-android-binder-p67-p37-integration-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Safe synthetic literal leak and no-reply marker tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          python host_candidate/p69_browser_reply/audit_browser_reply.py --selftest
+          echo 'P69_LITERAL_REDACTION=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Read private sha-locked original and P6 replacement browser assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p69_private
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk --dir .p69_private
+          gh release download dsh-source-v139-p6 --repo "$GH_REPO" \
+            --pattern DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip --dir .p69_private
+          original=.p69_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+          p6=.p69_private/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip
+          printf '%s  %s\n' 3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 "$original" | sha256sum -c -
+          printf '%s  %s\n' 3af586c2c83d1aea67d119357672559eb09371c77ef4e06900bb697c06d11fd5 "$p6" | sha256sum -c -
+          python host_candidate/p69_browser_reply/audit_browser_reply.py \
+            --original "$original" --p6 "$p6" > .p69_private/categorical.log
+          grep -Fxq 'P69_EXACT_SIGNED_V138_AND_P6_ASSET_INSPECTION=PASS' .p69_private/categorical.log
+          grep -Fxq 'P69_ORIGINAL_SOURCE_OR_STRING_LITERALS_PRINTED=NO' .p69_private/categorical.log
+          grep '^P69_BROWSER_' .p69_private/categorical.log | head -n 45
+          python host_candidate/p69_browser_reply/detail_mailbox.py --original "$original" --p6 "$p6" > .p69_private/backend_skeleton.log
+          grep -Fxq 'P69_MASKED_LITERAL_VALUES_LEAKED=NO' .p69_private/backend_skeleton.log
+          grep '^P69_TOOL_BACKEND_' .p69_private/backend_skeleton.log | head -n 44
+          echo 'P69_ORIGINAL_BROWSER_ASSET_PROVENANCE=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P69_BROWSER_NO_REPLY_ROOT_CAUSE=STATIC_TRIAGE_ONLY' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P69_ANDROID_RUNTIME_TOOL_REPLY=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P69_LOGIN_STATE_PERSISTENCE=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always purge APK P6 and reports
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p69_private
+          echo 'P69_SIGNING_KEY_AND_PRIVATE_LOGIN_DATA_NOT_ACCESSED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P69_PHONE_AND_PRODUCTION_UNCHANGED=YES' >> "$GITHUB_STEP_SUMMARY"

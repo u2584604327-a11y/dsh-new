@@ -1,0 +1,80 @@
+name: DSH P42 exact original manifest and live-start envelope audit
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p42_original_context_contract.py'
+      - 'host_candidate/P42_ORIGINAL_HOST_CONTEXT_GATE.md'
+      - '.github/workflows/p42-original-host-context.yml'
+permissions:
+  contents: read
+concurrency:
+  group: p42-original-host-contract-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  private-original-v138-runtime-contract:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p42-original-runtime-context-contract-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p41-original-art-emulator-rebuild-smoke-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Private repository and strict original baseline tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GH_REPO" --jq .visibility)" = private
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          python -m py_compile host_candidate/p42_original_context_contract.py
+      - name: Fetch original exact v138 into ephemeral CI only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p42tmp
+          gh release download dsh-baseline-v135dsh-baseline-v135 \
+            --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --dir .p42tmp
+          file=.p42tmp/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+          expected="$(PYTHONPATH=host_candidate python -c 'from p35_original_engine_spawn_contract import EXPECTED;print(EXPECTED)')"
+          test "${#expected}" = 64
+          printf '%s  %s\n' "$expected" "$file" | sha256sum -c -
+      - name: Snapshot exact real EngineManager runtime boundary and manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python host_candidate/p42_original_context_contract.py \
+            .p42tmp/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --report .p42tmp/ephemeral-safe-metadata.json | tee .p42tmp/status.txt
+          python3 - <<'PY'
+          import json
+          obj=json.load(open('.p42tmp/ephemeral-safe-metadata.json'))
+          assert obj['gate']=='P42_EXACT_ORIGINAL_HOST_CONTEXT_AND_NODE_ENVELOPE'
+          assert obj['engine']['primary_launch_direct_api_counts']['BUILDER_START']==1
+          assert obj['engine']['original_engine_family_direct_api_counts']['BUILDER_START']==3
+          assert obj['original_engine_process_intercepted'] is False
+          assert obj['v139_release']=='BLOCKED'
+          print('P42_ORIGINAL_HOST_CONTEXT_BOUNDARY=PASS_READ_ONLY')
+          print('P42_RUNTIME_SCRIPT_AND_DIRECTORIES=NOT_TRANSFERRED')
+          print('P42_ISOLATED_NODE_SERVICE_IN_REAL_DSH=NO')
+          print('P42_V139_RELEASE=BLOCKED')
+          PY
+          grep -E '^P42_' .p42tmp/status.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Always destroy input and derived report, never upload any bytes
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p42tmp
+          echo 'P42_PRIVATE_APK_AND_RUNTIME_REPORT_DELETED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P42_ORIGINAL_APP_BINARY_PATCHED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P42_ORIGINAL_DSH_PHONE_DATA_CHANGED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P42_V139_RELEASE=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

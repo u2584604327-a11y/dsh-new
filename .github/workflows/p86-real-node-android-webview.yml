@@ -1,0 +1,104 @@
+name: P86 authentic P6 Node sendCommand into Android native WebView and result
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p79_browser_native_mailbox/**'
+      - 'host_candidate/p83_hidden_browser/**'
+      - 'host_candidate/p85_durable_reply/**'
+      - 'host_candidate/p86_node_android_relay/**'
+      - 'host_candidate/p43_original_service/build_embedded_emulator_apk.sh'
+      - 'host_candidate/p43_original_service/android/com/dsh/android/p43/P43ProbeActivity.java'
+      - 'host_candidate/P86_REAL_P6_NODE_TO_ANDROID_WEBVIEW_TEST_RELAY.md'
+      - '.github/workflows/p86-real-node-android-webview.yml'
+permissions:
+  contents: read
+jobs:
+  original-p6-browser-names-android35-native-executor:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p86-real-p6-node-android-webview-relay-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p85-durable-native-browser-reply-ledger-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      P47_NO_HOST_FALLBACK: '1'
+      P49_NODE_STAGE: '0'
+      P51_SIDE_BY_SIDE: '1'
+      P51_X86_SIMULATOR_ONLY: '1'
+      P72_ACCESSOR_FIXTURE_ONLY: '1'
+      P74_FIXTURE_ENGINE_BRIDGE: '1'
+      P75_RENDEZVOUS_FIXTURE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - uses: actions/setup-node@v4
+        with: {node-version: '20'}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: SHA-pinned P6 protocol and P70 JavaScript request regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          mkdir -p .p86_private
+          gh release download dsh-source-v139-p6 --repo "$GH_REPO" \
+            --pattern DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip \
+            --dir .p86_private
+          p6=.p86_private/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip
+          printf '%s  %s\n' 3af586c2c83d1aea67d119357672559eb09371c77ef4e06900bb697c06d11fd5 "$p6" | sha256sum -c - >/dev/null
+          bash -n host_candidate/p86_node_android_relay/run_emulator_node.sh
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          python host_candidate/p70_browser_mailbox/patch_browser_mailbox.py \
+            --p6 "$p6" --output-browser-zip .p86_private/p70-browser.zip \
+            --output-js .p86_private/p70-browser.js > .p86_private/patch.log
+          grep -Fxq 'P70_EXACT_SHARED_MAILBOX_RACE_PATCHED=YES' .p86_private/patch.log
+          node host_candidate/p70_browser_mailbox/test_real_mailbox.mjs \
+            .p86_private/p70-browser.js > .p86_private/p70-tests.log
+          grep -Eq '^P70_ACTUAL_PATCHED_JS_MAILBOX_TESTS=PASS assertions=[0-9]+$' .p86_private/p70-tests.log
+          sudo apt-get -qq update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -qq install -y apktool
+          SDK="$ANDROID_HOME"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager";then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 | head -n1 || true)"
+          fi
+          test -n "$manager"
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+          echo 'P86_EXACT_P6_AND_REAL_P70_JS_PROTOCOL=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Build original-v138-derived independent Android browser test package
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash host_candidate/p43_original_service/build_embedded_emulator_apk.sh > .p86_private/build.log 2>&1 || {
+            grep -E 'P86_|P47_|P51_|error:|Traceback' .p86_private/build.log | tail -n 50 || true
+            exit 1
+          }
+          grep -Fxq 'P47_REBUILT_ORIGINAL_PRIMARY_ENGINE_BRIDGE_NO_HOST_START=PASS' .p86_private/build.log
+          grep -Fxq 'P51_SIGNED_APK_SEPARATE_PACKAGE_NO_PERMISSIONS=PASS' .p86_private/build.log
+          test -s .p43tmp/P43-ORIGINAL-DSH-EPHEMERAL-EMULATOR-ONLY.apk
+          echo 'P86_SOURCE_PRESERVATION_AND_EPHEMERAL_SIGNER=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: KVM if present
+        run: if test -c /dev/kvm;then sudo chmod 666 /dev/kvm;fi
+      - name: Android35 genuine P6 Node JS sendCommand correlated native WebView callbacks via test relay
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: bash host_candidate/p86_node_android_relay/run_emulator_node.sh
+      - name: Always purge private artifacts and signer
+        if: always()
+        run: |
+          rm -rf .p86_private .p43tmp
+          echo 'P86_ORIGINAL_BROWSER_MODEL_CONTINUATION=NOT_WIRED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P86_REAL_USER_BILIBILI_SESSION_UNTOUCHED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P86_FIXED_SIGNED_V139=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

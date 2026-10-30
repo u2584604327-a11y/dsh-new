@@ -1,0 +1,55 @@
+name: DSH P19 actual Node runtime dependency-closure gate (read-only)
+on:
+  pull_request:
+    paths:
+      - 'host_candidate/p19_node_runtime_intake.py'
+      - '.github/workflows/p19-node-runtime-intake.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: dsh-p19-runtime-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  pinned-node-runtime-elf:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Fetch exact private v138 only into transient runner storage
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input out
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO" \
+            --pattern 'DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk' --dir input
+          printf '%s  %s\n' \
+            '3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5' \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk | sha256sum -c -
+      - name: Static real binary ZIP ELF and dependency audit (never execute Node)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile host_candidate/p19_node_runtime_intake.py
+          python3 host_candidate/p19_node_runtime_intake.py \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --output out/p19-metadata-local.json \
+            --verify-known-baseline-blockers
+          echo 'P19_PINNED_V138_NODE_ZIP_ELF_METADATA=PASS_READONLY' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P19_NODE_EXECUTABLE_ACTUALLY_RELOCATED_TO_ISOLATED_UID=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P19_NODE_ZIP_ONLY_DEPENDENCIES_MISSING=YES_STATIC' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P19_NODE_PLUS_BOOTSTRAP_REQUIRED_LIBRARY_FILES=FOUND_STATIC' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P19_CROSS_ASSET_RUNTIME_LINKER_AND_UID_ACCESS=NOT_VERIFIED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P19_ORIGINAL_DSH_NODE_STARTUP_IN_ISOLATED_UID=NOT_RUN' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P19_ANDROID_SIGNED_PRODUCTION_APK=NOT_BUILT' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always destroy original binary and local intermediate data
+        if: always()
+        shell: bash
+        run: |
+          rm -rf input out
+          echo 'P19_PRIVATE_APK_OR_BUNDLE_ARTIFACT_UPLOADED=NO' >> "$GITHUB_STEP_SUMMARY"

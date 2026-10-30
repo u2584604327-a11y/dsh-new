@@ -1,0 +1,63 @@
+name: DSH P64 exact original command List builder mutation audit
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p64_list_builder_mutations/**'
+      - 'host_candidate/P64_COMMAND_LIST_MUTATION_GATES.md'
+      - '.github/workflows/p64-original-listbuilder-mutators.yml'
+permissions:
+  contents: read
+jobs:
+  original-signed-v138-passive:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p64-exact-original-list-builder-append-provenance-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p63-exact-kotlin-list-argument-return-slice-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Private scope and synthetic add/branch regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          python host_candidate/p64_list_builder_mutations/test_p64_list_builder_mutations.py > .p64_synthetic.log
+          grep -Eq '^P64_SYNTHETIC_LIST_BUILDER_MUTATIONS=PASS assertions=[0-9]+$' .p64_synthetic.log
+          grep -Fxq 'P64_SYNTHETIC_ORIGINAL_APK_READ=NO' .p64_synthetic.log
+          echo 'P64_SYNTHETIC_BRANCH_PROVENANCE_BARRIERS=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify signed-original v138 and exact ListBuilder mutators
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p64_private
+          gh release download dsh-baseline-v135dsh-baseline-v135 \
+            --repo "$GH_REPO" --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --dir .p64_private
+          original=.p64_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+          printf '%s  %s\n' \
+            3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            "$original" | sha256sum -c - >/dev/null
+          python host_candidate/p64_list_builder_mutations/p64_list_builder_mutations.py "$original" > .p64_private/summary.log
+          grep -Fxq 'P64_SIGNED_ORIGINAL_V138_P63_P35_HASH_CHAIN=PASS' .p64_private/summary.log
+          grep -Fxq 'P64_ORIGINAL_SCRIPT_PATH_VALUES_AND_SECRETS_EMITTED=NO' .p64_private/summary.log
+          grep -Fxq 'P64_FIXED_SIGNED_V139=BLOCKED' .p64_private/summary.log
+          grep '^P64_EXACT_BUILDER_MUTATION_CATEGORIES=' .p64_private/summary.log | tee -a "$GITHUB_STEP_SUMMARY"
+          echo 'P64_FORMAL_RELEASE=BLOCKED_REAL_READY_AND_ISOLATION' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always delete private source APK and temporary reports
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p64_private .p64_synthetic.log
+          echo 'P64_FIXED_SIGNING_KEY_NEVER_USED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P64_ORIGINAL_DEVICE_AND_PRODUCTION_UNCHANGED=YES' >> "$GITHUB_STEP_SUMMARY"

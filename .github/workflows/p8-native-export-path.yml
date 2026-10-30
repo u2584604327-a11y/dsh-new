@@ -1,0 +1,69 @@
+name: DSH P8 native export path removal exact DEX gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'host_candidate/patch_native_export_reply.py'
+      - '.github/workflows/p8-native-export-path.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bounded-native-export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Load exact v138 from private Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input out
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk --dir input
+          printf '%s  %s\n' 3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk | sha256sum -c -
+      - name: Reproduce pinned P2 and 18-byte P8 suppress-native-path DEX
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -r host_candidate/requirements.txt
+          python - <<'PY'
+          import json,pathlib,sys,zipfile
+          sys.path.insert(0,"host_candidate")
+          from patch_deny import apply
+          from patch_browser import apply_browser
+          from patch_privacy import apply_privacy
+          from patch_native_export_reply import apply as patch_p8
+          from patch_deny import sha
+          with zipfile.ZipFile('input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk') as z:
+              d0=z.read('classes.dex')
+          p1,_=apply(d0)
+          p2,_=apply_browser(p1)
+          p3,_=apply_privacy(p2)
+          result,report=patch_p8(p3)
+          assert report['PATCHED_PATH_JSON_WRITE_BYTES']==18
+          assert report['NATIVE_EXPORT_REPLY_BUNDLE_PATH_REMOVED']=='PASS_STATIC'
+          pathlib.Path('out/p8-report.json').write_text(json.dumps(report,indent=2))
+          print(json.dumps(report,indent=2))
+          PY
+          echo 'P8_NATIVE_BUNDLEPATH_JSON_WRITE_REMOVED=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+          echo 'ORIGINAL_EXPORT_ZIP_PRESERVED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'NODE_SAME_UID_ACCESS=NOT_SOLVED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'NO_APK_BUILT_OR_SIGNED=YES' >> "$GITHUB_STEP_SUMMARY"
+      - name: No patched DEX or APK artifact
+        if: always()
+        shell: bash
+        run: |
+          echo 'Only printed bounded metadata; no DEX, APK, diagnostic zip or signing key uploaded.' >> "$GITHUB_STEP_SUMMARY"

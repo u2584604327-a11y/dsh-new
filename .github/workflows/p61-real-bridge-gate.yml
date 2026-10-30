@@ -1,0 +1,63 @@
+name: DSH P61 exact generated bridge definition and release blockers
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p61_bridge/**'
+      - 'host_candidate/P61_GENERATED_BRIDGE_AND_RELEASE_GATES.md'
+      - '.github/workflows/p61-real-bridge-gate.yml'
+permissions:
+  contents: read
+jobs:
+  original-signed-v138-passive:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p61-resolve-dex-generated-list-bridge-and-release-gates-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p60-original-process-list-return-producer-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Private repo and synthetic branch/range guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+          python host_candidate/p61_bridge/test_p61_original_bridge.py > .p61_test.log
+          grep -Eq '^P61_SYNTHETIC_EXACT_METHOD=PASS assertions=[0-9]+$' .p61_test.log
+          grep -Fxq 'P61_SYNTHETIC_NO_ORIGINAL_APK=YES' .p61_test.log
+          echo 'P61_SYNTHETIC_BRANCH_RANGE_GATES=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Original v138 hash and exact method body classification
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p61_private
+          gh release download dsh-baseline-v135dsh-baseline-v135 \
+            --repo "$GH_REPO" --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --dir .p61_private
+          original=.p61_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+          printf '%s  %s\n' \
+            3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            "$original" | sha256sum -c - >/dev/null
+          python host_candidate/p61_bridge/p61_original_bridge.py "$original" > .p61_private/summary.log
+          grep -Fxq 'P61_EXACT_SIGNED_V138_P60_TO_P35_CHAIN=PASS' .p61_private/summary.log
+          grep -Fxq 'P61_RAW_ORIGINAL_METHOD_VALUES_EMITTED=NO' .p61_private/summary.log
+          grep -Fxq 'P61_V139_FORMAL_APK=BLOCKED' .p61_private/summary.log
+          grep '^P61_GENERATED_PRODUCER_CATEGORICAL=' .p61_private/summary.log | tee -a "$GITHUB_STEP_SUMMARY"
+          echo 'P61_SIGNED_FORMAL_APK=BLOCKED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Destroy temporary original and logs
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p61_private .p61_test.log
+          echo 'P61_FIXED_SIGNING_KEY_NOT_ACCESSED_BY_CI=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P61_ORIGINAL_PHONE_UNCHANGED=YES' >> "$GITHUB_STEP_SUMMARY"

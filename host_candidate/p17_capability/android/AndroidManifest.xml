@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.dsh.p17.probe">
+  <uses-sdk android:minSdkVersion="34" android:targetSdkVersion="28"/>
+  <application android:label="DSH P17 broker proof only">
+    <activity android:name=".P17BrokerProbeActivity" android:exported="true">
+      <intent-filter><action android:name="android.intent.action.MAIN"/>
+        <category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+    </activity>
+    <service android:name=".IsolatedCountWorker" android:process=":worker"
+      android:isolatedProcess="true" android:exported="false"/>
+  </application>
+</manifest>

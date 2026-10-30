@@ -1,0 +1,73 @@
+name: DSH P55 original production startup literals and native-addon reachability audit
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p55_runtime_imports/**'
+      - 'host_candidate/P55_ORIGINAL_ENGINE_STARTUP_DEPENDENCY_GATE.md'
+      - '.github/workflows/p55-original-engine-import-closure.yml'
+permissions:
+  contents: read
+concurrency:
+  group: p55-private-import-scan-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  exact-original-sha-v138-startup-import-audit:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p55-original-engine-startup-import-closure-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p54-immutable-engine-tar-hashes-and-native-addon-audit-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Exact private repository, static safety and synthetic-only failure tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          python -m py_compile host_candidate/p54_engine_tree/p54_immutable_tar_audit.py
+          python -m py_compile host_candidate/p55_runtime_imports/p55_exact_original_import_audit.py
+          python -m py_compile host_candidate/p55_runtime_imports/test_p55_import_audit.py
+          python host_candidate/p55_runtime_imports/test_p55_import_audit.py | tee .p55_synthetic_evidence.txt
+          grep -Eq '^P55_STATIC_STARTUP_AND_NATIVE_IMPORT_SYNTHETIC_TESTS=PASS assertions=[0-9]+$' .p55_synthetic_evidence.txt
+          grep -Fxq 'P55_ORIGINAL_JS_FILE_NAMES_AND_CONTENTS_LEAKED=NO' .p55_synthetic_evidence.txt
+          echo 'P55_SYNTHETIC_IMPORT_NEGATIVE_TESTS=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Exact original v138 private engine read-only bounded static import graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .p55_private
+          gh release download dsh-baseline-v135dsh-baseline-v135 \
+            --repo "$GH_REPO" --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk \
+            --dir .p55_private
+          original=.p55_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk
+          test -s "$original"
+          python host_candidate/p55_runtime_imports/p55_exact_original_import_audit.py "$original" \
+            | tee .p55_private/private-aggregate-only.txt
+          grep -Fxq 'P55_EXACT_ORIGINAL_IMMUTABLE_TREE_ROOT=PASS' .p55_private/private-aggregate-only.txt
+          grep -Fxq 'P55_STATIC_JS_IMPORT_SCAN=PASS_BOUNDED_HEURISTIC' .p55_private/private-aggregate-only.txt
+          grep -Fxq 'P55_SOURCE_PATHS_OR_JS_CONTENT_EMITTED=NO' .p55_private/private-aggregate-only.txt
+          grep -Fxq 'P55_PRODUCTION_MODULE_GRAPH_CLOSED=NO' .p55_private/private-aggregate-only.txt
+          grep -Fxq 'P55_SIGNED_V139_APK=BLOCKED' .p55_private/private-aggregate-only.txt
+          echo 'P55_FULL_ORIGINAL_ENGINE_TREE_HASH_MATCH_P54=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P55_STATIC_IMPORT_METADATA_BOUNDED_READONLY=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P55_REAL_PRODUCTION_NODE_JS_EXECUTION=NOT_PERFORMED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P55_ANDROID_NATIVE_ADDON_RUNTIME_COMPATIBILITY=NOT_PROVEN' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P55_FIXED_SIGNED_V139=BLOCKED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always destroy exact original APK and transient import metadata
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p55_private .p55_synthetic_evidence.txt
+          echo 'P55_SOURCE_AND_ORIGINAL_BINARIES_UPLOADED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P55_GITHUB_RELEASES_MODIFIED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P55_OWNER_APP_AND_DEVICE_CHANGED=NO' >> "$GITHUB_STEP_SUMMARY"

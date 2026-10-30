@@ -1,0 +1,143 @@
+name: DSH P26 Android35 real multi-SONAME plus no-SONAME native isolated execution
+on:
+  pull_request:
+    paths:
+      - 'host_candidate/p26_multilib/**'
+      - '.github/workflows/p26-isolated-soname-preload.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: dsh-p26-multilib-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  android35-versioned-soname-preload:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android35 and NDK toolchains
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          manager="$(command -v sdkmanager || true)"
+          if test -z "$manager";then
+            manager="$(find "$SDK/cmdline-tools" -name sdkmanager -type f -perm /111 2>/dev/null | head -n1 || true)"
+          fi
+          test -n "$manager"
+          "$manager" --sdk_root="$SDK" 'platforms;android-35' 'build-tools;35.0.0'
+          NDK=""
+          if test -d "$SDK/ndk";then
+            NDK="$(find "$SDK/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1 || true)"
+          fi
+          if test -z "$NDK";then
+            "$manager" --sdk_root="$SDK" 'ndk;27.2.12479018'
+            NDK="$SDK/ndk/27.2.12479018"
+          fi
+          test -x "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android35-clang"
+          echo "SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "NDK_ROOT=$NDK" >> "$GITHUB_ENV"
+      - name: Build real x86_64 PIE linked to exact versioned SONAME in renamed unversioned native library file
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/native out/classes out/dex out/pkg/lib/x86_64
+          CC="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android35-clang"
+          "$CC" -fPIC -shared -O2 \
+            -Wl,-soname,libp26core.so.1 -Wl,-z,max-page-size=16384 \
+            host_candidate/p26_multilib/native/core.c -o out/native/libp26core.so
+          "$CC" -fPIC -shared -O2 \
+            -Wl,-soname,libp26top.so.2 -Wl,-z,max-page-size=16384 \
+            host_candidate/p26_multilib/native/top.c \
+            -L out/native -l:libp26core.so -o out/native/libp26top.so
+          "$CC" -fPIC -shared -O2 -Wl,-z,max-page-size=16384 \
+            host_candidate/p26_multilib/native/no_soname.c \
+            -o out/native/libp26sqlite.so
+          "$CC" -fPIE -pie -O2 -Wl,-z,max-page-size=16384 \
+            host_candidate/p26_multilib/native/main.c \
+            -L out/native -l:libp26top.so -l:libp26sqlite.so \
+            -o out/native/libp26exec.so
+          readelf -d out/native/libp26core.so | grep -Fq 'Library soname: [libp26core.so.1]'
+          readelf -d out/native/libp26top.so | grep -Fq 'Library soname: [libp26top.so.2]'
+          readelf -d out/native/libp26top.so | grep -Fq 'Shared library: [libp26core.so.1]'
+          if readelf -d out/native/libp26sqlite.so | grep -Fq '(SONAME)';then
+            echo "::error::SQLite-like missing SONAME control has a SONAME";exit 1
+          fi
+          readelf -d out/native/libp26exec.so | grep -Fq 'Shared library: [libp26top.so.2]'
+          readelf -d out/native/libp26exec.so | grep -Fq 'Shared library: [libp26sqlite.so]'
+          echo 'P26_REAL_NDK_TWO_VERSIONED_TRANSITIVE_DTN_AND_NO_SONAME=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+      - name: Compile Android isolatedProcess and ephemeral-signed test APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          javac --release 8 -cp "$SDK_ROOT/platforms/android-35/android.jar" \
+            -d out/classes \
+            host_candidate/p26_multilib/android/com/dsh/p26/multilib/P26Activity.java \
+            host_candidate/p26_multilib/android/com/dsh/p26/multilib/P26Worker.java
+          jar cf out/p26.jar -C out/classes .
+          "$SDK_ROOT/build-tools/35.0.0/d8" --min-api 34 \
+            --lib "$SDK_ROOT/platforms/android-35/android.jar" \
+            --output out/dex out/p26.jar
+          "$SDK_ROOT/build-tools/35.0.0/aapt" package -f \
+            -M host_candidate/p26_multilib/android/AndroidManifest.xml \
+            -I "$SDK_ROOT/platforms/android-35/android.jar" \
+            -F out/p26-unsigned.apk
+          (cd out/dex && zip -q -j ../p26-unsigned.apk classes.dex)
+          cp out/native/libp26core.so out/pkg/lib/x86_64/
+          cp out/native/libp26top.so out/pkg/lib/x86_64/
+          cp out/native/libp26sqlite.so out/pkg/lib/x86_64/
+          cp out/native/libp26exec.so out/pkg/lib/x86_64/
+          (cd out/pkg && zip -q -0 ../p26-unsigned.apk \
+            lib/x86_64/libp26core.so lib/x86_64/libp26top.so \
+            lib/x86_64/libp26sqlite.so lib/x86_64/libp26exec.so)
+          "$SDK_ROOT/build-tools/35.0.0/zipalign" -f -P 16 4 \
+            out/p26-unsigned.apk out/p26-aligned.apk
+          "$SDK_ROOT/build-tools/35.0.0/zipalign" -c -P 16 4 out/p26-aligned.apk
+          test "$(unzip -Z1 out/p26-aligned.apk | grep -Ec '^lib/x86_64/.*\.so$')" -eq 4
+          if unzip -Z1 out/p26-aligned.apk | grep -Eq 'libp26(core|top)[.]so[.][0-9]';then
+            echo "::error::Unexpected installed versioned archive path";exit 1
+          fi
+          TEST_PASSWORD="$(openssl rand -hex 16)"
+          keytool -genkeypair -alias disposable -keyalg RSA -keysize 3072 \
+            -validity 1 -storetype PKCS12 \
+            -dname 'CN=P26 DISPOSABLE REAL SONAME PRELOAD TEST' \
+            -keystore out/p26-ci-key.p12 -storepass "$TEST_PASSWORD" \
+            -keypass "$TEST_PASSWORD" -noprompt >/dev/null 2>&1
+          "$SDK_ROOT/build-tools/35.0.0/apksigner" sign \
+            --ks out/p26-ci-key.p12 --ks-key-alias disposable \
+            --ks-pass "pass:$TEST_PASSWORD" --key-pass "pass:$TEST_PASSWORD" \
+            --out out/p26-disposable.apk out/p26-aligned.apk
+          "$SDK_ROOT/build-tools/35.0.0/apksigner" verify out/p26-disposable.apk
+          if grep -Fq '<uses-permission' host_candidate/p26_multilib/android/AndroidManifest.xml;then
+            echo '::error::Standalone P26 probe must request no Android permissions';exit 1
+          fi
+          echo 'P26_REAL_ANDROID35_DISPOSABLE_APK_BUILD=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Enable KVM for isolated disposable Android35
+        shell: bash
+        run: |
+          if test -c /dev/kvm;then sudo chmod 666 /dev/kvm;fi
+      - name: Real Android35 isolated UID paired no-preload vs preload native exec test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: bash host_candidate/p26_multilib/run_emulator.sh
+      - name: Destroy all test binaries, keys, and local logs
+        if: always()
+        shell: bash
+        run: |
+          rm -rf out
+          echo 'P26_ACTUAL_ORIGINAL_ARM64_NODE_EXECUTED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P26_ORIGINAL_DSH_SIGNING_MATERIAL_USED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P26_USER_DEVICE_OR_PRODUCTION_CHANGED=NO' >> "$GITHUB_STEP_SUMMARY"

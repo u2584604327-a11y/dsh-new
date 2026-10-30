@@ -1,0 +1,88 @@
+name: DSH P38 PRIVATE draft original ARM64 Node process streaming APK
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p38_node_stream/**'
+      - 'host_candidate/P38_ORIGINAL_NODE_PROCESS_STREAM_GATE.md'
+      - '.github/workflows/p38-private-process-stream-apk.yml'
+permissions:
+  contents: write
+concurrency:
+  group: p38-private-owner-apk
+  cancel-in-progress: false
+jobs:
+  compile-test-build-private-draft:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p38-real-node-process-stream-20261029' &&
+      github.event.pull_request.base.ref == 'dsh/p37-remote-process-proxy-contract-20261029'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      P38_TAG: p38-private-original-node-process-stream-20261029
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Require private repository and exact owner-only nonexisting draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GH_REPO" --jq .visibility)" = private
+          if gh release view "$P38_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo '::error::Existing release must never be overwritten'; exit 1
+          fi
+          if gh api "repos/$GH_REPO/git/ref/tags/$P38_TAG" >/dev/null 2>&1; then
+            echo '::error::Existing tag; stop'; exit 1
+          fi
+          grep -Fq 'android:isolatedProcess="true"' host_candidate/p38_node_stream/android/AndroidManifest.xml
+          grep -Fq 'android:exported="false"' host_candidate/p38_node_stream/android/AndroidManifest.xml
+          ! grep -Fq '<uses-permission' host_candidate/p38_node_stream/android/AndroidManifest.xml
+      - name: Verify P37 real Java8 process lifecycle tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash host_candidate/p37_remote_process/run_contract_tests.sh | tee p37-tests.txt
+          grep -Eq 'P37_JAVA_PROCESS_LIFECYCLE_PROXY_TESTS=PASS assertions=[0-9]+' p37-tests.txt
+      - name: Build exact v138 original Node and isolated streaming test APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash host_candidate/p38_node_stream/build_private_apk.sh
+          test -s delivery/P38-Private-ARM64-Original-Node-Process-Stream.apk
+          test -s delivery/README-P38-PRIVATE.txt
+          test -s delivery/SHA256SUMS.txt
+          test "$(find delivery -maxdepth 1 -type f | wc -l)" -eq 3
+          (cd delivery && sha256sum -c SHA256SUMS.txt)
+          echo 'P38_APK_EXACT_ELF_SHA_16K_SIGNED=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P38_ANDROID_PROCESS_STREAM_REAL_DEVICE=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Create exactly three assets in private Draft Release
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          gh release create "$P38_TAG" \
+            delivery/P38-Private-ARM64-Original-Node-Process-Stream.apk \
+            delivery/README-P38-PRIVATE.txt delivery/SHA256SUMS.txt \
+            --repo "$GH_REPO" --target "$CANDIDATE_SHA" --draft \
+            --title 'PRIVATE P38 isolated original Node Process streaming test — NOT v139' \
+            --notes 'Owner-only Android test APK. Separate package com.dsh.p38.nodebridge, throwaway signer and no requested permissions. Exact source-pinned original Node ARM64 ELF and 10 libraries. Real Binder and P37 Java Process facade streaming of bounded fixed Node stdout/stderr/exit. Not tested on physical Android; original DSH EngineManager and production chat/browser/files untouched. Must NEVER publish as v139.'
+          test "$(gh release view "$P38_TAG" --repo "$GH_REPO" --json isDraft --jq '.isDraft')" = true
+          actual="$(gh release view "$P38_TAG" --repo "$GH_REPO" --json assets --jq '[.assets[].name]|sort|join(",")')"
+          test "$actual" = 'P38-Private-ARM64-Original-Node-Process-Stream.apk,README-P38-PRIVATE.txt,SHA256SUMS.txt'
+          echo 'P38_PRIVATE_DRAFT_ASSETS=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Destroy private input and disposable signer
+        if: always()
+        shell: bash
+        run: |
+          rm -rf input out delivery
+          echo 'P38_REAL_DSH_ENGINEMANAGER_WIRED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P38_PRODUCTION_SIGNING_KEY_USED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P38_V139_RELEASE=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

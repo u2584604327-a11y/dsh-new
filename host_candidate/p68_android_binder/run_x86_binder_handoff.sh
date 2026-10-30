@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+bash host_candidate/p53_child_start/run_x86_start_ack.sh
+logs="$(adb logcat -d -v brief -s P43_HOST_BINDER:I '*:S')"
+grep -Fq 'P68_BINDER_HELLO_NO_PROCESS_ALLOCATED=PASS' <<< "$logs"
+grep -Fq 'P68_ANDROID_BINDER_P67_P37_CHILD_HANDOFF=PASS' <<< "$logs"
+grep -Fq 'P68_CHILD_STARTED_NOT_ENGINE_READY=PASS' <<< "$logs"
+grep -Fq 'P53_P37_PROCESS_PROXY_AFTER_REAL_CHILD_START_ACK=PASS' <<< "$logs"
+if grep -Fq 'P48_REAL_ORIGINAL_PROCESS_PROXY=BLOCKED_' <<< "$logs";then
+ echo 'P68_AUTHENTICATED_HANDOFF=BLOCKED'
+ exit 1
+fi
+echo 'P68_REAL_ANDROID_MESSENGER_P67_TO_P37=PASS'
+echo 'P68_BINDER_HELLO_ALLOCATES_NO_PROXY=PASS'
+echo 'P68_ENGINE_MANAGER_PRODUCTION=NOT_WIRED'
+echo 'P68_REAL_NODE_SCRIPT_READY=NOT_TESTED'
+echo 'P68_FIXED_SIGNED_V139=BLOCKED'

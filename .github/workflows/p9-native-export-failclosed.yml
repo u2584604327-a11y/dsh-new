@@ -1,0 +1,68 @@
+name: DSH P9 failclosed native diagnostics ZIP creation audit
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'host_candidate/patch_native_export_failclosed.py'
+      - '.github/workflows/p9-native-export-failclosed.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  exact-original-dex-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Download exact known private v138 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO" \
+            --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk --dir input
+          printf '%s  %s\n' 3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5 \
+            input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk | sha256sum -c -
+          python -m pip install -r host_candidate/requirements.txt
+      - name: Replay original to ART-safe P8 and statically verify P9 failclose
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,sys,zipfile
+          sys.path.insert(0,'host_candidate')
+          from patch_deny_art_safe import apply_art_safe
+          from patch_deny import sha
+          import patch_browser,patch_privacy,patch_native_export_reply,patch_native_export_failclosed
+          with zipfile.ZipFile('input/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk') as z:
+              original=z.read('classes.dex')
+          a,_=apply_art_safe(original)
+          patch_browser.EXPECTED_P1=sha(a)
+          b,_=patch_browser.apply_browser(a)
+          patch_privacy.EXPECTED=sha(b)
+          c,_=patch_privacy.apply_privacy(b)
+          patch_native_export_reply.EXPECTED_P2=sha(c)
+          d,_=patch_native_export_reply.apply(c)
+          e,report=patch_native_export_failclosed.apply(d)
+          assert report['NATIVE_LOG_EXPORT_BUNDLE_BUILDER_DISABLED']=='PASS_STATIC'
+          assert report['EXISTING_IF_EQZ_FAILURE_PATH']=='PRESERVED_STATIC'
+          assert report['EXISTING_FILES_DELETED']=='NO'
+          print(json.dumps(report,indent=2))
+          PY
+          echo 'P9_DIAGNOSTIC_ZIP_NEW_CREATION_DEFAULT_DENIED=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+          echo 'ORIGINAL_NONSENSITIVE_LOGS_AND_ATTACHMENTS=NOT_REWRITTEN' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P9_ART_RUNTIME=NOT_VERIFIED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Explicit unverified gates
+        if: always()
+        run: |
+          echo 'Existing ZIP files accessible to same-UID Node: NOT_BLOCKED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'User-approved P5 upload and native review UI: NOT_CONNECTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No new APK output, APK signing or binary artifacts uploaded.' >> "$GITHUB_STEP_SUMMARY"

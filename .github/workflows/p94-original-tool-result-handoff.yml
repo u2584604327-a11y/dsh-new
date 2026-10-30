@@ -1,0 +1,52 @@
+name: P94 exact tool_call_id result handoff no replay
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p94_tool_return/**'
+      - 'host_candidate/P94_ORIGINAL_TOOL_RESULT_CONTINUATION_GATE.md'
+      - '.github/workflows/p94-original-tool-result-handoff.yml'
+permissions:
+  contents: read
+jobs:
+  original-model-continuation-contract:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p94-one-shot-tool-result-model-continuation-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p93-original-chat-message-patch-dispatch-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '20'}
+      - name: Single-use tool result and cross-turn rejection
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = 'u2584604327-a11y/dshe'
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          node --check host_candidate/p94_tool_return/P94ToolResultRelay.mjs
+          node host_candidate/p94_tool_return/P94ToolResultRelay.test.mjs | tee /tmp/p94-handoff.log
+          for x in \
+            P94_TOOL_RESULT_ID_AND_ORIGINAL_TURN_CORRELATION=PASS \
+            P94_DENIED_TOOL_RETURNS_ERROR_WITHOUT_EXECUTING=PASS \
+            P94_UNKNOWN_OUTCOME_AND_ACK_LOSS_NO_REPLAY=PASS \
+            P94_MODEL_CONTINUATION_NEEDS_OBSERVED_ORIGINAL_TURN=PASS; do
+            grep -Fxq "$x" /tmp/p94-handoff.log
+          done
+          rm -f /tmp/p94-handoff.log
+          echo 'P94_ORIGINAL_TOOL_RESULT_ENVELOPE_CONTRACT=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Hard source-only release blocks
+        if: always()
+        run: |
+          {
+            echo 'P94_ACTUAL_PINNED_P6_NODE_BROKER_PRODUCER=NOT_WIRED'
+            echo 'P94_ORIGINAL_DSH_MODEL_TOOL_DISPATCHER=NOT_WIRED'
+            echo 'P94_LIVE_TOOL_RESULT_MODEL_CONTINUATION=NOT_PROVEN'
+            echo 'P94_NO_AUTOMATIC_EXTERNAL_COMMENT_POST=YES'
+            echo 'P94_NO_SIGNING_NO_APK_NO_PRODUCTION_MODIFICATION=YES'
+          } >> "$GITHUB_STEP_SUMMARY"

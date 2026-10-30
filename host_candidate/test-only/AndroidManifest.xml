@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.dsh.p1.smoketest">
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="28"/>
+    <instrumentation android:name=".DshInstrumentation" android:targetPackage="com.dsh.android"
+        android:label="DSH disposable P5 real Android UI smoke (no network)" android:functionalTest="true"/>
+    <instrumentation android:name=".P12LogViewerInstrumentation" android:targetPackage="com.dsh.android"
+        android:label="DSH disposable P12 LogViewer button hook test" android:functionalTest="true"/>
+    <instrumentation android:name=".P13AutoHookInstrumentation" android:targetPackage="com.dsh.android"
+        android:label="DSH P13 AndroidX startup production autohook gate" android:functionalTest="true"/>
+    <application android:label="DSH Disposable Test Only" android:hasCode="true"/>
+</manifest>

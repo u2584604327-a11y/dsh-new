@@ -1,0 +1,89 @@
+name: DSH P70 P6 browser shared mailbox no-reply race regression
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p70_browser_mailbox/**'
+      - 'host_candidate/P70_BROWSER_NO_REPLY_SINGLEFLIGHT.md'
+      - '.github/workflows/p70-browser-mailbox-race.yml'
+permissions:
+  contents: read
+jobs:
+  exact-p6-browser-mailbox-private:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p70-browser-mailbox-no-reply-singleflight-20261030' &&
+      github.event.pull_request.base.ref == 'dsh/p69-browser-no-reply-execution-dispatch-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '20'}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: P69 source and private P6 SHA pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "u2584604327-a11y/dshe"
+          test "$(gh api "repos/$GH_REPO" --jq .private)" = true
+          mkdir -p .p70_private
+          gh release download dsh-source-v139-p6 --repo "$GH_REPO" \
+            --pattern DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip \
+            --dir .p70_private
+          p6=.p70_private/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip
+          printf '%s  %s\n' 3af586c2c83d1aea67d119357672559eb09371c77ef4e06900bb697c06d11fd5 "$p6" | sha256sum -c - >/dev/null
+          python host_candidate/p69_browser_reply/audit_browser_reply.py --selftest
+          echo 'P70_ACTUAL_P6_INPUT_HASH=PASS' >> "$GITHUB_STEP_SUMMARY"
+          gh release download dsh-baseline-v135dsh-baseline-v135 --repo "$GH_REPO"             --pattern DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk             --dir .p70_private
+          printf '%s  %s\n' 3ca56655d79afc57431636e340823e7071bc830615ca615c485b0b9a30b6e3e5             .p70_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk | sha256sum -c - >/dev/null
+          python -m pip install --no-cache-dir -r host_candidate/requirements.txt
+      - name: Patch exactly one browser JS entry in ephemeral nested asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          p6=.p70_private/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip
+          python host_candidate/p70_browser_mailbox/patch_browser_mailbox.py \
+            --p6 "$p6" \
+            --output-browser-zip .p70_private/browser-tool-p70.zip \
+            --output-js .p70_private/browser-lib-index-p70.js > .p70_private/patch-summary.log
+          grep -Fxq 'P70_EXACT_SHARED_MAILBOX_RACE_PATCHED=YES' .p70_private/patch-summary.log
+          grep -Fxq 'P70_ORIGINAL_BROWSER_OTHER_ENTRIES_UNCHANGED=YES' .p70_private/patch-summary.log
+          echo 'P70_ONLY_EXACT_P6_BROWSER_LIB_INDEX_MODIFIED=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Real patched browser-tool JS overlap stale reply no reply tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node host_candidate/p70_browser_mailbox/test_real_mailbox.mjs \
+            .p70_private/browser-lib-index-p70.js > .p70_private/node-tests.log
+          grep -Eq '^P70_ACTUAL_PATCHED_JS_MAILBOX_TESTS=PASS assertions=[0-9]+$' .p70_private/node-tests.log
+          grep -Fxq 'P70_CONCURRENT_TWO_REQUESTS_SERIALIZED=PASS' .p70_private/node-tests.log
+          grep -Fxq 'P70_MISMATCHED_REPLY_DID_NOT_COMPLETE=PASS' .p70_private/node-tests.log
+          grep -Fxq 'P70_NO_REPLY_OUTCOME_UNKNOWN_FAIL_CLOSED=PASS' .p70_private/node-tests.log
+          grep -Fxq 'P70_AUTOMATIC_COMMENT_RETRY=NO' .p70_private/node-tests.log
+          echo 'P70_REAL_PATCHED_P6_MAILBOX_JAVASCRIPT_TESTS=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P70_ANDROID_TOOL_RESULT_AND_LOGIN_PERSISTENCE=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Original v138 native WebView and mailbox static responder evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python host_candidate/p70_browser_mailbox/audit_native_browser_mailbox.py             .p70_private/DSH-vc138-P0-OFFLINE-TEST-fixed-signature.apk             .p70_private/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip             > .p70_private/native-browser-report.log
+          grep -Fxq 'P70_SIGNED_ORIGINAL_V138_NATIVE_BROWSER_AUDIT=PASS' .p70_private/native-browser-report.log
+          grep -Fxq 'P70_ORIGINAL_COOKIE_VALUES_OR_BROWSER_HISTORY_ACCESSED=NO' .p70_private/native-browser-report.log
+          grep '^P70_NATIVE_BROWSER_' .p70_private/native-browser-report.log
+          grep '^P70_MAILBOX_NAMES_' .p70_private/native-browser-report.log
+          grep '^P70_WEBVIEW_COOKIE_' .p70_private/native-browser-report.log
+          echo 'P70_NATIVE_BROWSER_READONLY_CHECK=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always remove original P6 patched JS and temporary output
+        if: always()
+        shell: bash
+        run: |
+          rm -rf .p70_private
+          echo 'P70_FIXED_SIGNING_SECRET_ACCESSED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P70_ORIGINAL_PHONE_AND_WEBVIEW_COOKIE_DATA_CHANGED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P70_REAL_PRODUCTION_V139_APK=NOT_BUILT' >> "$GITHUB_STEP_SUMMARY"

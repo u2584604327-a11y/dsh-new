@@ -1,0 +1,62 @@
+name: DSH P36 actual original ARM64 Node stdout to trusted Binder UI static build
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p36_node_to_binder/**'
+      - 'host_candidate/P36_REAL_ORIGINAL_NODE_BINDER_INTEGRATION_GATE.md'
+      - '.github/workflows/p36-original-node-binder-build.yml'
+permissions:
+  contents: read
+concurrency:
+  group: p36-real-node-binder-static
+  cancel-in-progress: false
+jobs:
+  build-private-node-binder-candidate-without-release:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p36-real-original-node-to-trusted-host-ipc-20261029' &&
+      github.event.pull_request.base.ref == 'dsh/p35-exact-engine-spawn-contract-20261029'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Validate SHA-pinned source and zero requested permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GH_REPO" --jq '.visibility')" = private
+          grep -Fq 'android:isolatedProcess="true"' host_candidate/p36_node_to_binder/android/AndroidManifest.xml
+          grep -Fq 'android:exported="false"' host_candidate/p36_node_to_binder/android/AndroidManifest.xml
+          if grep -Fq '<uses-permission' host_candidate/p36_node_to_binder/android/AndroidManifest.xml;then
+            echo "::error::P36 unexpected Android permission";exit 1
+          fi
+          grep -Fq '"--no-warnings","--eval",FIXED_JS' host_candidate/p36_node_to_binder/android/com/dsh/p36/nodebridge/P36IsolatedNodeWorker.java
+          grep -Fq 'verifiedNodeFrame=lines[1]' host_candidate/p36_node_to_binder/android/com/dsh/p36/nodebridge/P36IsolatedNodeWorker.java
+          grep -Fq 'onTrustedUiApproveOnceClick' host_candidate/p36_node_to_binder/android/com/dsh/p36/nodebridge/P36Activity.java
+          grep -Fq 'request.sendingUid' host_candidate/p32_node_ipc/android/com/dsh/p32/P32AndroidBinderPort.java
+          echo 'P36_PRIVACY_AND_ORIGINAL_NODE_PROVENANCE_SOURCE_GATES=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+      - name: Build exact 11 immutable original ARM64 ELF inside independent Android APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash host_candidate/p36_node_to_binder/build_private_apk.sh
+          test -s delivery/P36-Private-ARM64-Original-Node-Binder-Bridge.apk
+          test -s delivery/README-P36-PRIVATE.txt
+          test -s delivery/SHA256SUMS.txt
+          (cd delivery && sha256sum -c SHA256SUMS.txt)
+          echo 'P36_REAL_ORIGINAL_NODE_11_ELF_EXACT_HASH_AND_16K_APK=PASS_STATIC' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P36_REAL_NODE_OUTPUT_TO_AUTHENTIC_BINDER_REQUIRES_OWNER_PHONE=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P36_ORIGINAL_DSH_ENGINEMANAGER_PROCESS_HANDLE_MIGRATED=NO' >> "$GITHUB_STEP_SUMMARY"
+      - name: Always delete temporary APK, original private baseline and throwaway signer
+        if: always()
+        shell: bash
+        run: |
+          rm -rf input out delivery
+          echo 'P36_TEST_APK_NOT_UPLOADED_OR_PUBLISHED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P36_ORIGINAL_DSH_PHONE_AND_SIGNING_KEY_UNCHANGED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P36_V139_PRODUCTION_RELEASE=BLOCKED' >> "$GITHUB_STEP_SUMMARY"

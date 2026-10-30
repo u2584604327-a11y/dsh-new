@@ -1,0 +1,107 @@
+name: DSH P5 native Android classes compile and D8
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/p5-android-compile.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-native-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Fetch SHA-pinned P6 source from private Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input out
+          gh release download dsh-source-v139-p6 --repo "$GH_REPO" \
+            --pattern 'DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip' \
+            --dir input
+          printf '%s  %s\n' '3af586c2c83d1aea67d119357672559eb09371c77ef4e06900bb697c06d11fd5' \
+            input/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip | sha256sum -c -
+      - name: Extract P5 Java source with strict path limits
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import io, zipfile, pathlib, hashlib
+          outer=zipfile.ZipFile("input/DSH_V139_P6_NODE_CREDENTIAL_LOG_REDACTION_AND_ASSET_STAGING.zip")
+          p5=outer.read("upstream/DSH_V139_P5_AUDIT_FAIL_CLOSED_SOURCE_ONLY.zip")
+          with zipfile.ZipFile(io.BytesIO(p5)) as source:
+              expected_sha=source.read("SHA256_MANIFEST.json")
+              print("P5_MANIFEST_SHA256="+hashlib.sha256(expected_sha).hexdigest())
+              names=source.namelist()
+              allowed=[n for n in names if n.startswith("merged_source/src/") and n.endswith(".java")]
+              if len(allowed)!=9:
+                  raise ValueError("Expected exactly nine Android+JVM source classes, got "+str(len(allowed)))
+              for name in allowed:
+                  if ".." in pathlib.PurePosixPath(name).parts:
+                      raise ValueError("Unsafe archive path")
+                  target=pathlib.Path("out/src")/pathlib.PurePosixPath(name).relative_to("merged_source/src")
+                  target.parent.mkdir(parents=True,exist_ok=True)
+                  target.write_bytes(source.read(name))
+              print("P5_NATIVE_SOURCE_CLASS_COUNT="+str(len(allowed)))
+          PY
+      - name: Install real Android platform and D8
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="$(printenv ANDROID_HOME || printenv ANDROID_SDK_ROOT || echo /usr/local/lib/android/sdk)"
+          SDKMANAGER="$(command -v sdkmanager || true)"
+          if test -z "$SDKMANAGER"; then
+            SDKMANAGER="$(find "$SDK/cmdline-tools" -type f -name sdkmanager -perm /111 2>/dev/null | head -n1 || true)"
+          fi
+          test -n "$SDKMANAGER"
+          (yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses >/dev/null) || true
+          "$SDKMANAGER" --sdk_root="$SDK" "platforms;android-35" "build-tools;35.0.0"
+          test -s "$SDK/platforms/android-35/android.jar"
+          test -x "$SDK/build-tools/35.0.0/d8"
+          echo "SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+      - name: Compile the actual Android-only native P5 classes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/classes out/dex
+          mapfile -d '' sources < <(find out/src -name '*.java' -print0 | sort -z)
+          test "${#sources[@]}" -eq 9
+          javac --release 8 \
+            -cp "$SDK_ROOT/platforms/android-35/android.jar" \
+            -d out/classes "${sources[@]}"
+          jar cf out/p5-native-all.jar -C out/classes .
+          "$SDK_ROOT/build-tools/35.0.0/d8" \
+            --min-api 26 \
+            --lib "$SDK_ROOT/platforms/android-35/android.jar" \
+            --output out/dex out/p5-native-all.jar
+          test -s out/dex/classes.dex
+          printf 'P5_NATIVE_JAVAC_ANDROID35=PASS\nP5_NATIVE_D8_API26=PASS\n' >> "$GITHUB_STEP_SUMMARY"
+          sha256sum out/dex/classes.dex | cut -d' ' -f1 >> "$GITHUB_STEP_SUMMARY"
+      - name: Report precise limitations
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo 'This job compiles isolated P5 native classes against real Android APIs.'
+            echo 'It does NOT merge classes into the original DSH APK.'
+            echo 'APP_HOST_CONNECTED=NO'
+            echo 'ORIGINAL_LOG_VIEWER_CONNECTED=NO'
+            echo 'APPROVED_UPLOAD_CONNECTED=NO'
+            echo 'ART_VERIFIED=NO'
+            echo 'V139_APK_BUILT=NO'
+            echo 'SIGNING_KEY_USED=NO'
+          } >> "$GITHUB_STEP_SUMMARY"

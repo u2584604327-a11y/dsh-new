@@ -1,0 +1,46 @@
+name: DSH P37 source-only remote Process lifecycle contract
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'host_candidate/p37_remote_process/**'
+      - 'host_candidate/P37_PROCESS_PROXY_CONTRACT_GATE.md'
+      - '.github/workflows/p37-remote-process-contract.yml'
+permissions:
+  contents: read
+concurrency:
+  group: p37-remote-process-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  source-only-process-proxy-test:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dsh/p37-remote-process-proxy-contract-20261029' &&
+      github.event.pull_request.base.ref == 'dsh/p36-real-original-node-to-trusted-host-ipc-20261029'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Run real JVM Process lifecycle and bounded stream regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash host_candidate/p37_remote_process/run_contract_tests.sh | tee p37-result.txt
+          grep -Eq '^P37_JAVA_PROCESS_LIFECYCLE_PROXY_TESTS=PASS assertions=[0-9]+$' p37-result.txt
+          grep -Fxq 'P37_ORIGINAL_ENGINEMANAGER_WIRING=NO' p37-result.txt
+          grep -Fxq 'P37_ANDROID_BINDER_RUNTIME_E2E=NOT_TESTED' p37-result.txt
+          grep -Fxq 'P37_V139_RELEASE=BLOCKED' p37-result.txt
+          cat p37-result.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Explicitly mark source-only limitations
+        if: always()
+        shell: bash
+        run: |
+          echo 'P37_ORIGINAL_SIGNED_APK_AND_NODE_NOT_DOWNLOADED=YES' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P37_APP_SIGNING_AND_APK_DEPLOYMENT=NOT_ATTEMPTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P37_ORIGINAL_ENGINE_DALVIK_ART_PATCHED=NO' >> "$GITHUB_STEP_SUMMARY"
+          echo 'P37_RELEASE_GATE=BLOCKED' >> "$GITHUB_STEP_SUMMARY"
