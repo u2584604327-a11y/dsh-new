@@ -15,7 +15,7 @@ const selected=[
   ['AgentLoop',AgentLoop,['create','resume','resumeWith','prepare']],
   ['SessionStore',SessionStore,['create','get','update','append','createSession']],
   ['AgentRegistry',AgentRegistry,['register','get','create']],
-  ['SessionController',SessionController,['prompt','follow','liveProjections']],
+  ['SessionController',SessionController,['resolveAgent','create','prompt','updateQueue','control','projections','follow','liveProjections']],
   ['LlmRuntime',LlmRuntime,['stream','generate','create','get']]
 ];
 const safe=(s)=>/^[A-Za-z_$][A-Za-z0-9_$]{0,70}$/.test(s);
@@ -51,6 +51,24 @@ for(const [label,klass,focus] of selected){
   const methods=focus.map(x=>info(klass,x)).filter(Boolean);
   process.stdout.write('P98_ORIGINAL_ENTRYPOINT='+label+' '+JSON.stringify(methods)+'\n');
 }
+function sanitizeStatic(value,depth=0){
+  if(depth>3)return typeof value;
+  if(value===null||value===undefined||typeof value==='boolean'||typeof value==='number')return value;
+  if(typeof value==='string')return /^[A-Za-z0-9_.:/-]{0,120}$/.test(value)?value:'string';
+  if(Array.isArray(value))return value.slice(0,30).map(x=>sanitizeStatic(x,depth+1));
+  if(typeof value==='object'){
+    const out={};
+    for(const key of Object.keys(value).filter(safe).slice(0,35))
+      out[key]=sanitizeStatic(value[key],depth+1);
+    return out;
+  }
+  if(typeof value==='function')return {type:'function',arity:value.length};
+  return typeof value;
+}
+process.stdout.write('P98_ORIGINAL_SESSION_CONTROLLER_INJECT='+JSON.stringify(
+  sanitizeStatic(SessionController.inject))+'\n');
+process.stdout.write('P98_ORIGINAL_SESSION_CONTROLLER_CONFIG='+JSON.stringify(
+  sanitizeStatic(SessionController.Config))+'\n');
 const moduleExports=Object.keys(SessionControllerModule).filter(safe).sort();
 process.stdout.write('P98_ORIGINAL_SESSION_CONTROLLER_MODULE_EXPORTS='+JSON.stringify(moduleExports)+'\n');
 for(const name of moduleExports){
