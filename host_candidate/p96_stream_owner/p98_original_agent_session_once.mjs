@@ -14,6 +14,7 @@ import {ToolRuntime} from '@deepseek-ai/dsh-tools';
 import {SystemPrompt} from '@deepseek-ai/dsh-system-prompt';
 import {SessionProjectionRegistry} from '@deepseek-ai/dsh-session-projection';
 import {AgentLoop} from '@deepseek-ai/dsh-agent-loop';
+import {SessionController} from '@deepseek-ai/dsh-api-session-controller';
 import net from 'node:net';
 import http from 'node:http';
 import https from 'node:https';
@@ -121,6 +122,34 @@ try{
            nullValue:value===null
          };
        });
+   }
+   let apiController=null;
+   try{
+     apiController=new SessionController(context,{});
+     log('SESSION_CONTROLLER_CONSTRUCTED','YES');
+     log('SESSION_CONTROLLER_OWN_SHAPE',JSON.stringify(safeOwnShape(apiController)));
+     log('SESSION_CONTROLLER_PROTOTYPE_METHODS',JSON.stringify(methods(apiController)));
+     for(const field of ['commands','controlState','history','agents']){
+       const object=apiController?.[field];
+       log('SESSION_CONTROLLER_'+field.toUpperCase()+'_TYPE',
+         Array.isArray(object)?'array':typeof object);
+       log('SESSION_CONTROLLER_'+field.toUpperCase()+'_CONSTRUCTOR',
+         object?.constructor?.name||'MISSING');
+       log('SESSION_CONTROLLER_'+field.toUpperCase()+'_OWN_SHAPE',
+         JSON.stringify(safeOwnShape(object)));
+       log('SESSION_CONTROLLER_'+field.toUpperCase()+'_METHODS',
+         JSON.stringify(methods(object)));
+     }
+     for(const name of ['create','prompt','updateQueue','cancel','attachment']){
+       const contract=safeMethodContract(apiController?.commands,name);
+       if(contract)log('SESSION_COMMAND_'+name.toUpperCase()+'_CONTRACT',JSON.stringify(contract));
+     }
+   }catch(error){
+     log('SESSION_CONTROLLER_CONSTRUCTED','NO');
+     log('SESSION_CONTROLLER_CONSTRUCT_ERROR_TYPE',
+       String(error?.name||'UNKNOWN').replace(/[^A-Za-z0-9_]/g,''));
+     log('SESSION_CONTROLLER_CONSTRUCT_ERROR_MESSAGE',
+       String(error?.message||'').slice(0,120).replace(/\/[\w/.-]+/g,'<PATH>'));
    }
    log('HANDLE_PROTOTYPE_METHODS',JSON.stringify(methods(handle)));
    log('SEND_METHOD_CONTRACT',JSON.stringify(safeMethodContract(handle,'send')));
