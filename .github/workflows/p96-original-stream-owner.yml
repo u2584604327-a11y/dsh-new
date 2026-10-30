@@ -15,7 +15,7 @@ jobs:
     if: >-
       github.repository == 'u2584604327-a11y/dsh-new' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.ref == 'migration/dshe-p98-20261031' &&
+      github.event.pull_request.head.ref == 'dsh/p98-session-projection-init-20261031' &&
       github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-24.04
     timeout-minutes: 28
