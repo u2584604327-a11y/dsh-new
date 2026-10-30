@@ -150,6 +150,23 @@ function callArgumentSummary(body,callee){
     safeLiterals:[...new Set(literals)].slice(0,30)};
 }
 
+function safeReturnObjectSummary(body){
+  const m=/return\s*\{([\s\S]{0,1200}?)\}\s*;?/.exec(body);
+  if(!m)return null;
+  const raw=m[1];
+  const colonKeys=[...raw.matchAll(/(?:^|,)\s*([A-Za-z_$][A-Za-z0-9_$]{0,80})\s*:/g)]
+    .map(x=>x[1]).filter(safeId);
+  const shorthand=[...raw.matchAll(/(?:^|,)\s*([A-Za-z_$][A-Za-z0-9_$]{0,80})\s*(?=,|$)/g)]
+    .map(x=>x[1]).filter(safeId);
+  const ids=[...raw.matchAll(/\b([A-Za-z_$][A-Za-z0-9_$]{0,80})\b/g)]
+    .map(x=>x[1]).filter(x=>safeId(x)&&!['true','false','null','undefined','return','await','new'].includes(x));
+  const refs=[...raw.matchAll(/([A-Za-z_$][A-Za-z0-9_$]{0,80}(?:\??\.[A-Za-z_$][A-Za-z0-9_$]{0,80}){1,5})/g)]
+    .map(x=>x[1].replaceAll('?.','.')).filter(x=>x.split('.').every(safeId));
+  return {propertyKeys:[...new Set([...colonKeys,...shorthand])].slice(0,30),
+    identifiers:[...new Set(ids)].slice(0,35),
+    memberRefs:[...new Set(refs)].slice(0,35)};
+}
+
 function contract(name,method){
   if(!method)return {name,present:false};
   const body=method.body;
@@ -177,6 +194,7 @@ function contract(name,method){
     thisFields:[...new Set(thisFields)].slice(0,50),
     memberCalls:[...new Set(memberCalls)].slice(0,60),
     memberCallArguments:callArguments,
+    returnObject:safeReturnObjectSummary(body),
     safeLiterals:[...new Set(literals)].slice(0,80),
     calledIdentifiers:[...new Set(called)].slice(0,60),
     sourceSize:body.length
