@@ -242,6 +242,29 @@ try{
      }
    }
    log('SESSION_PROJECTION_DEFINITION_CONTRACTS',JSON.stringify(projectionDefContracts));
+   if(registrationIsMap){
+     for(const key of ['inbox','turnBoundary']){
+       const def=registrations.get(key)?.def;
+       if(typeof def?.init!=='function')continue;
+       try{
+         const initState=def.init(handle.session?.header,handle.session?.inheritedEventCount);
+         log('SESSION_PROJECTION_'+key.toUpperCase()+'_INIT_TYPE',
+           Array.isArray(initState)?'array':typeof initState);
+         log('SESSION_PROJECTION_'+key.toUpperCase()+'_INIT_SHAPE',
+           JSON.stringify(safeOwnShape(initState)));
+         if(initState&&typeof initState==='object'){
+           log('SESSION_PROJECTION_'+key.toUpperCase()+'_INIT_OWN_PROPERTY_NAMES',
+             JSON.stringify(Object.getOwnPropertyNames(initState)
+               .filter(k=>/^[A-Za-z_$][A-Za-z0-9_$]{0,64}$/.test(k)).slice(0,35)));
+         }
+       }catch(error){
+         log('SESSION_PROJECTION_'+key.toUpperCase()+'_INIT_ERROR_TYPE',
+           String(error?.name||'UNKNOWN').replace(/[^A-Za-z0-9_]/g,''));
+         log('SESSION_PROJECTION_'+key.toUpperCase()+'_INIT_ERROR_MESSAGE',
+           String(error?.message||'').slice(0,100).replace(/\/[\w/.-]+/g,'<PATH>'));
+       }
+     }
+   }
    log('INBOX_PROJECTIONS_SAME_SERVICE',handle.inbox?.projections===projectionService);
    const inboxProjections=handle.inbox?.projections;
    log('INBOX_PROJECTIONS_TYPE',typeof inboxProjections);
