@@ -200,6 +200,48 @@ try{
    log('SESSION_PROJECTION_REGISTRATIONS_SIZE',registrationSize);
    log('SESSION_PROJECTION_REGISTRATION_KEYS',JSON.stringify(registrationKeys));
    log('SESSION_PROJECTION_REGISTRATION_DEFINITIONS',JSON.stringify(registrationDefinitions));
+   function safeOwnFunctionContract(fn,name){
+     if(typeof fn!=='function')return null;
+     const source=Function.prototype.toString.call(fn);
+     const sig=source.match(/^[^(]*\(([^)]{0,360})\)/)?.[1]||'';
+     const parameters=sig.split(',').map(x=>x.trim())
+       .filter(x=>/^[A-Za-z_$][A-Za-z0-9_$]{0,64}$/.test(x)).slice(0,10);
+     const fields=[...source.matchAll(/(?:state|event|input|message|session|cell|ctx|request|value)\??\.([A-Za-z_$][A-Za-z0-9_$]{0,64})/g)]
+       .map(x=>x[1]);
+     const literals=[...source.matchAll(/["']([A-Za-z0-9_.:/-]{1,80})["']/g)]
+       .map(x=>x[1]).filter(x=>!/^(?:http|https):/i.test(x));
+     const calls=[...source.matchAll(/([A-Za-z_$][A-Za-z0-9_$]{0,64})\s*\(/g)]
+       .map(x=>x[1]).filter(x=>!['if','for','while','switch','catch'].includes(x));
+     return {name,arity:fn.length,parameters,
+       referencedFields:[...new Set(fields)].slice(0,35),
+       safeLiterals:[...new Set(literals)].slice(0,35),
+       calledIdentifiers:[...new Set(calls)].slice(0,35),
+       isAsync:fn.constructor?.name==='AsyncFunction'};
+   }
+   const projectionDefContracts=[];
+   if(registrationIsMap){
+     for(const key of ['inbox','turnBoundary']){
+       const registration=registrations.get(key);
+       const def=registration?.def;
+       if(!def||typeof def!=='object'){
+         projectionDefContracts.push({key,defType:typeof def});
+         continue;
+       }
+       const ownKeys=Object.keys(def)
+         .filter(k=>/^[A-Za-z_$][A-Za-z0-9_$]{0,64}$/.test(k)).slice(0,35);
+       const fields=ownKeys.map(name=>{
+         const value=def[name];
+         return {
+           name,
+           type:Array.isArray(value)?'array':typeof value,
+           arrayLength:Array.isArray(value)?value.length:undefined,
+           functionContract:typeof value==='function'?safeOwnFunctionContract(value,name):undefined
+         };
+       });
+       projectionDefContracts.push({key,ownKeys,fields});
+     }
+   }
+   log('SESSION_PROJECTION_DEFINITION_CONTRACTS',JSON.stringify(projectionDefContracts));
    log('INBOX_PROJECTIONS_SAME_SERVICE',handle.inbox?.projections===projectionService);
    const inboxProjections=handle.inbox?.projections;
    log('INBOX_PROJECTIONS_TYPE',typeof inboxProjections);
