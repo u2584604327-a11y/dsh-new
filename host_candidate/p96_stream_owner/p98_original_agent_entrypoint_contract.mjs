@@ -12,7 +12,7 @@ import * as SessionControllerModule from '@deepseek-ai/dsh-api-session-controlle
 import {LlmRuntime} from '@deepseek-ai/dsh-llm';
 
 const selected=[
-  ['AgentLoop',AgentLoop,['create','resume','resumeWith','prepare']],
+  ['AgentLoop',AgentLoop,['create','createAgent','createStoredSession','initializeAgent','setupAndPublish','resume','resumeWith','prepare']],
   ['SessionStore',SessionStore,['create','get','update','append','createSession']],
   ['AgentRegistry',AgentRegistry,['register','get','create']],
   ['SessionController',SessionController,['resolveAgent','create','prompt','updateQueue','control','projections','follow','liveProjections']],
