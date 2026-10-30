@@ -154,7 +154,7 @@ for(const file of filesUnder(root)){
 }
 if(!agentFound)throw new Error('API_SESSION_AGENT_CONTROLLER_CLASS_NOT_FOUND');
 
-const agentMethods=['constructor','createSession','resolveAgent','get','selectionFor','serializeImageAdmission'];
+const agentMethods=['constructor','createSession','created','createMinted','composeAgent','inOrder','claim','createAgent','reuseLive','reuseSetup','agentOptions','resolveAgent','selectionFor','serializeImageAdmission'];
 const agentContracts=agentMethods.map(name=>contract(name,balancedMethod(agentFound,name)));
 const agentLiterals=[...agentFound.matchAll(/["']([^"'\n\r]{1,100})["']/g)]
   .map(x=>x[1]).filter(safeLiteral);
