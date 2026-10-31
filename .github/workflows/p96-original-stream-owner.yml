@@ -15,7 +15,7 @@ jobs:
     if: >-
       github.repository == 'u2584604327-a11y/dsh-new' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.ref == 'migration/dshe-p98-20261031' &&
+      github.event.pull_request.head.ref == 'dsh/p98-session-projection-init-20261031' &&
       github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-24.04
     timeout-minutes: 28
@@ -182,6 +182,18 @@ jobs:
             -u ACTIONS_ID_TOKEN_REQUEST_URL -u SSH_AUTH_SOCK \
             timeout 20s node .p96private/agent-runtime/p96_original_agent_runtime_probe.mjs
           echo 'P96_EXACT_ORIGINAL_AGENT_TOOL_RUNTIME_IMPORT=PASS' >> "$GITHUB_STEP_SUMMARY"
+          cp host_candidate/p96_stream_owner/p98_session_command_source_contract.mjs \
+            .p96private/agent-runtime/p98_session_command_source_contract.mjs
+          env -u GH_TOKEN -u GITHUB_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+            -u ACTIONS_ID_TOKEN_REQUEST_URL -u SSH_AUTH_SOCK \
+            timeout 15s node .p96private/agent-runtime/p98_session_command_source_contract.mjs \
+            > .p96private/p98-session-command-contract.log
+          grep -Fxq 'P98_SESSION_COMMAND_SOURCE_CONTRACT=PASS' \
+            .p96private/p98-session-command-contract.log
+          grep -Fxq 'P98_SESSION_COMMAND_SOURCE_TEXT_EXPORTED=NO' \
+            .p96private/p98-session-command-contract.log
+          cat .p96private/p98-session-command-contract.log
+          echo 'P98_ORIGINAL_SESSION_COMMAND_SOURCE_CONTRACT=PASS' >> "$GITHUB_STEP_SUMMARY"
           cp host_candidate/p96_stream_owner/p96_original_tool_result_event_fixture.mjs \
             .p96private/agent-runtime/p96_original_tool_result_event_fixture.mjs
           env -u GH_TOKEN -u GITHUB_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
@@ -270,6 +282,17 @@ jobs:
             .p96private/p98-session.log
           cat .p96private/p98-session.log
           echo 'P98_REAL_AGENTLOOP_SESSION_CREATE_DIAGNOSTIC_NOT_DEVICE=PASS' >> "$GITHUB_STEP_SUMMARY"
+          cp host_candidate/p96_stream_owner/p98_original_agent_registry_create_once.mjs \
+            .p96private/agent-runtime/p98_original_agent_registry_create_once.mjs
+          env -u GH_TOKEN -u GITHUB_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+            -u ACTIONS_ID_TOKEN_REQUEST_URL -u SSH_AUTH_SOCK \
+            timeout 12s node .p96private/agent-runtime/p98_original_agent_registry_create_once.mjs \
+            > .p96private/p98-factory-create.log
+          grep -Fxq 'P98_FACTORY_CREATE_NETWORK_ATTEMPTS=0' .p96private/p98-factory-create.log
+          grep -Fxq 'P98_FACTORY_CREATE_NO_PROMPT=YES' .p96private/p98-factory-create.log
+          grep -Fxq 'P98_FACTORY_CREATE_NO_TOOL=YES' .p96private/p98-factory-create.log
+          cat .p96private/p98-factory-create.log
+          echo 'P98_ORIGINAL_AGENT_REGISTRY_FACTORY_PATH_DIAGNOSTIC=PASS' >> "$GITHUB_STEP_SUMMARY"
           # P98 inbox send remains BLOCKED in the minimal synthetic harness
           # (ReactLoopInbox.mutate missing required original projection state).
           # Never count a diagnostic failure as a passed session turn.
