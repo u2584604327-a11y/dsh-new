@@ -48,7 +48,7 @@ try{
   const options={
     sessionId,
     agentOptions:{provider:'p98-no-provider',model:'p98-no-model'},
-    meta:{cwd:'p98-ci-synthetic',agentPreset:undefined},
+    meta:{cwd:process.cwd(),agentPreset:undefined},
     setup:undefined
   };
   log('OPTIONS_KEYS',JSON.stringify(Object.keys(options)));
